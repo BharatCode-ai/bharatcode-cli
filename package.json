@@ -1,7 +1,7 @@
 {
   "name": "bharatcode",
-  "version": "0.2.9",
-  "description": "BharatCode CLI and OpenCode plugin for OAuth-based access to the BharatCode public beta.",
+  "version": "0.2.10",
+  "description": "BharatCode CLI for OAuth-based coding with the BharatCode public beta.",
   "type": "module",
   "main": "index.js",
   "bin": {
@@ -24,15 +24,13 @@
     "lib/bharatcode-auth.js",
     "lib/cli-args.js",
     "lib/opencode-config.js",
-    "docs/opencode-setup.md",
-    "docs/opencode-rebrand-path.md",
-    "docs/stt-dictation.md",
+    "docs/setup.md",
+    "docs/compatibility.md",
     "README.md",
     "LICENSE"
   ],
   "keywords": [
     "opencode",
-    "opencode-plugin",
     "bharatcode",
     "qwen",
     "vllm",

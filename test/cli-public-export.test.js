@@ -26,14 +26,15 @@ test("CLI public export manifest includes support gates and excludes operational
     "lib/bharatcode-auth.js",
     "lib/cli-args.js",
     "lib/opencode-config.js",
-    "docs/opencode-setup.md",
-    "docs/opencode-rebrand-path.md",
-    "docs/stt-dictation.md",
+    "docs/setup.md",
+    "docs/compatibility.md",
     "scripts/audit-open-source-readiness.mjs",
     "scripts/export-cli-public-repo.mjs",
     "test/open-source-readiness.test.js",
     "test/cli-public-export.test.js",
+    "test/release-and-branding.test.js",
     ".github/ISSUE_TEMPLATE/cli_bug_report.yml",
+    ".github/workflows/npm-release.yml",
   ]) {
     assert.ok(manifest.files.includes(expected), `${expected} should be exported`)
   }

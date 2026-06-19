@@ -1,44 +1,10 @@
-# BharatCode
+# BharatCode CLI
 
-BharatCode public beta website, OAuth CLI, OpenCode plugin, and operating notes.
+BharatCode CLI lets public beta users start an OAuth-authenticated coding
+session from npm. Users sign in with BharatCode once; the CLI refreshes that
+session and sends model requests through the BharatCode backend.
 
-## Project Layout
-
-- `index.js`: OpenCode plugin entrypoint published as the `bharatcode` npm
-  package.
-- `bin/bharatcode.js`: BharatCode OAuth CLI wrapper.
-- `lib/`: dependency-free OAuth credential and OpenCode config helpers.
-- `apps/web/`: Next.js public beta website, Supabase Auth pages, OAuth consent,
-  account flow, dashboard, and model proxy.
-- `docs/opencode-setup.md`: OAuth-only user setup guide.
-- `docs/public-beta-runbook.md`: deployment and verification runbook.
-- `docs/opencode-rebrand-path.md`: OpenCode CLI/Desktop/VS Code rebrand path.
-- `docs/security-hardening.md`: current server hardening checklist and ops
-  notes.
-- `docs/stt-dictation.md`: plan for remote dictation support through the same
-  OAuth-protected BharatCode backend path.
-- `stt/`: OpenAI-compatible transcription service.
-- `infra/`: checked-in systemd and deployment notes.
-
-## Live Services
-
-- Website: `https://bharatcode.ai`
-- OAuth issuer: `https://evgvlcaxfpwupaiwzqqm.supabase.co/auth/v1`
-- User-facing model endpoint: `https://bharatcode.ai/api/model/v1`
-- Current upstream model endpoint: `https://bharatcode.kaabil.me/v1`
-
-## Model Capabilities
-
-The OpenCode plugin explicitly declares image attachment support:
-
-- input: text, image
-- output: text
-- tools: enabled
-- reasoning: enabled
-
-## Quick Setup
-
-The beta path uses OAuth, not user API keys:
+## Install
 
 ```bash
 npm install -g bharatcode
@@ -46,29 +12,63 @@ bharatcode .
 ```
 
 `bharatcode .` opens browser login when needed, stores OAuth credentials in
-`~/.bharatcode/credentials.json`, installs the BharatCode OpenCode plugin, and
-adds it to `~/.config/opencode/opencode.jsonc`. The plugin then calls
-`https://bharatcode.ai/api/model/v1` with a short-lived Bearer token. The
-explicit `bharatcode auth login` and `bharatcode opencode configure` commands
-remain available as repair commands.
+`~/.bharatcode/credentials.json`, prepares the local BharatCode engine config,
+and launches the coding session from the current project.
 
-Full setup instructions are in
-[docs/opencode-setup.md](./docs/opencode-setup.md).
+No user API key is required for the public beta path.
 
-## Publishing
-
-Before publishing:
+## Common Commands
 
 ```bash
-npm pack --dry-run
+bharatcode auth login
+bharatcode auth status
+bharatcode doctor
+```
+
+The repair command `bharatcode opencode configure` is retained for compatibility
+with the current upstream engine config file.
+
+## What Is In This Repo
+
+- `bin/bharatcode.js`: BharatCode CLI entrypoint.
+- `index.js`: BharatCode provider module loaded by the local engine.
+- `lib/`: OAuth credential, CLI argument, and engine config helpers.
+- `docs/setup.md`: user setup and troubleshooting.
+- `docs/compatibility.md`: runtime compatibility notes.
+- `scripts/audit-open-source-readiness.mjs`: package and repo boundary audit.
+- `.github/workflows/npm-release.yml`: explicit npm release workflow.
+
+Full setup instructions are in [docs/setup.md](./docs/setup.md).
+
+## Runtime Compatibility
+
+BharatCode currently uses the OpenCode engine as an upstream runtime dependency.
+That name can still appear in dependency names and config paths, but public setup
+and support should be BharatCode-first.
+
+See [docs/compatibility.md](./docs/compatibility.md).
+
+## Release Path
+
+The npm package is released from this public repository through the
+`Publish npm package` GitHub Actions workflow.
+
+Release checklist:
+
+```bash
+npm test
+npm run audit:oss:repo
+npm run pack:check
 node -e "import('./index.js').then(m => console.log(typeof m.default, typeof m.BharatCodePlugin))"
 ```
 
-Web app:
+Publishing is intentionally explicit:
 
-```bash
-cd apps/web
-npm install
-npm test
-npm run build
-```
+1. Bump `package.json` if the version already exists on npm.
+2. Create and publish a GitHub Release such as `v0.2.10`.
+3. The workflow runs tests, the public repo audit, package inspection, a dry-run
+   publish, then `npm publish --access public --provenance`.
+4. Manual `workflow_dispatch` defaults to dry-run mode.
+
+The workflow requires the `NPM_TOKEN` repository secret. It does not run on
+ordinary pushes.
