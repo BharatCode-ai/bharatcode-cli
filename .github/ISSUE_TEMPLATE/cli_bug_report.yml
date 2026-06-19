@@ -1,0 +1,69 @@
+name: CLI bug report
+description: Report a BharatCode CLI or OpenCode plugin issue with redacted diagnostics.
+title: "[cli] "
+labels: ["bug", "cli"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste OAuth tokens, API keys, full credential files, private prompts, private repository links, raw personal data, or secrets.
+        Include only redacted logs and visible error text.
+  - type: input
+    id: cli-version
+    attributes:
+      label: CLI version
+      description: Run `bharatcode --version` if available.
+      placeholder: "0.2.9"
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: Run `node --version`.
+      placeholder: "v22.18.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      description: The command you ran, without tokens or credential paths.
+      placeholder: "bharatcode ."
+    validations:
+      required: true
+  - type: textarea
+    id: visible-error
+    attributes:
+      label: Visible error
+      description: Paste the visible error text only. Redact paths and identifiers if needed.
+      placeholder: "Unauthorized: BharatCode OAuth session expired..."
+    validations:
+      required: true
+  - type: input
+    id: approximate-time
+    attributes:
+      label: Approximate timestamp
+      description: Include timezone if useful.
+      placeholder: "2026-06-20 10:15 IST"
+    validations:
+      required: false
+  - type: textarea
+    id: redacted-log
+    attributes:
+      label: Redacted log excerpt
+      description: Optional. Remove OAuth tokens, API keys, credential files, private prompts, private repo links, and raw personal data.
+      render: text
+    validations:
+      required: false

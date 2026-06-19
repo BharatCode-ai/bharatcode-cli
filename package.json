@@ -1,0 +1,66 @@
+{
+  "name": "bharatcode",
+  "version": "0.2.9",
+  "description": "BharatCode CLI and OpenCode plugin for OAuth-based access to the BharatCode public beta.",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "bharatcode": "bin/bharatcode.js"
+  },
+  "exports": {
+    ".": "./index.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "audit:oss": "node scripts/audit-open-source-readiness.mjs",
+    "audit:oss:repo": "node scripts/audit-open-source-readiness.mjs --repo-visibility",
+    "export:oss:cli": "node scripts/export-cli-public-repo.mjs",
+    "smoke": "node -e \"import('./index.js').then(m => console.log(typeof m.default, typeof m.BharatCodePlugin))\"",
+    "pack:check": "npm pack --dry-run"
+  },
+  "files": [
+    "bin/bharatcode.js",
+    "index.js",
+    "lib/bharatcode-auth.js",
+    "lib/cli-args.js",
+    "lib/opencode-config.js",
+    "docs/opencode-setup.md",
+    "docs/opencode-rebrand-path.md",
+    "docs/stt-dictation.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "bharatcode",
+    "qwen",
+    "vllm",
+    "vision",
+    "speech-to-text"
+  ],
+  "author": "Shrey Gupta",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BharatCode-ai/bharatcode-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BharatCode-ai/bharatcode-cli/issues"
+  },
+  "homepage": "https://github.com/BharatCode-ai/bharatcode-cli#readme",
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "opencode-ai": "^1.15.10"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
