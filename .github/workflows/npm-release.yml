@@ -1,0 +1,67 @@
+name: Publish npm package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run all release checks and npm publish dry-run only"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish bharatcode
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run public repository audit
+        run: npm run audit:oss:repo
+
+      - name: Check package contents
+        run: npm run pack:check
+
+      - name: Verify npm token
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "NPM_TOKEN repository secret is required for npm publish."
+            exit 1
+          fi
+
+      - name: Verify package version is unpublished
+        run: |
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published. Bump package.json before release."
+            exit 1
+          fi
+
+      - name: Dry-run npm publish
+        run: npm publish --dry-run --access public
+
+      - name: Publish npm package
+        if: ${{ github.event_name == 'release' || inputs.dry_run == false }}
+        run: npm publish --access public --provenance

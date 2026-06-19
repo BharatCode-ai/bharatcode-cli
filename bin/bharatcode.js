@@ -32,11 +32,11 @@ Usage:
   bharatcode auth status      Show the local BharatCode session
   bharatcode auth logout      Remove local BharatCode credentials
   bharatcode opencode configure
-                             Add the BharatCode plugin to OpenCode config
-  bharatcode doctor           Check auth/config/OpenCode wiring
-  bharatcode [opencode args]  Launch OpenCode through the BharatCode wrapper
+                             Prepare the BharatCode engine config
+  bharatcode doctor           Check auth/config/BharatCode engine wiring
+  bharatcode [args]           Launch BharatCode from the current project
 
-No user API keys are required. Run \`bharatcode .\` from a project; the CLI opens browser login and configures OpenCode when needed.`)
+No user API keys are required. Run \`bharatcode .\` from a project; the CLI opens browser login and configures BharatCode when needed.`)
 }
 
 function userLabel(user) {
@@ -120,8 +120,8 @@ async function configureOpenCode({ quiet = false } = {}) {
   const result = await ensureBharatCodePlugin()
   const install = await installBharatCodeOpenCodePlugin({ opencodeBin, quiet })
   if (!quiet) {
-    console.log(`Installed OpenCode plugin package: ${install.moduleName}`)
-    console.log(`${result.changed ? "Updated" : "Already configured"} OpenCode config: ${result.configPath}`)
+    console.log(`Installed BharatCode engine package: ${install.moduleName}`)
+    console.log(`${result.changed ? "Updated" : "Already configured"} BharatCode engine config: ${result.configPath}`)
   }
   return { ...result, install, opencodeBin }
 }
@@ -138,10 +138,10 @@ async function doctor() {
 
   const configPath = defaultOpenCodeConfigPath()
   await ensureBharatCodePlugin({ configPath })
-  console.log(`opencode config: ok (${configPath})`)
+  console.log(`BharatCode engine config: ok (${configPath})`)
 
   const opencodeBin = await resolveOpenCodeBin()
-  console.log(`opencode engine: ${opencodeBin}`)
+  console.log(`BharatCode engine: ${opencodeBin}`)
   return exitCode
 }
 
@@ -156,7 +156,7 @@ async function launchCredentials() {
     if (!missingSessionError(error)) throw error
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw error
 
-    console.log("No BharatCode session found. Opening browser login before launching OpenCode...")
+    console.log("No BharatCode session found. Opening browser login before launching BharatCode...")
     return authLogin()
   }
 }
@@ -164,7 +164,7 @@ async function launchCredentials() {
 async function launchOpenCode(args) {
   await launchCredentials()
   const configured = await configureOpenCode({ quiet: true })
-  if (configured.changed) console.log(`Configured OpenCode for BharatCode: ${configured.configPath}`)
+  if (configured.changed) console.log(`Configured BharatCode engine: ${configured.configPath}`)
   const command = configured.opencodeBin
   const env = {
     ...process.env,

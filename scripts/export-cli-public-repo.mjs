@@ -10,7 +10,9 @@ const SUPPORT_FILES = [
   "scripts/export-cli-public-repo.mjs",
   "test/open-source-readiness.test.js",
   "test/cli-public-export.test.js",
+  "test/release-and-branding.test.js",
   ".github/ISSUE_TEMPLATE/cli_bug_report.yml",
+  ".github/workflows/npm-release.yml",
 ]
 
 const DEFAULT_PUBLIC_GITHUB_REPO = "BharatCode-ai/bharatcode-cli"

@@ -1,5 +1,5 @@
 name: CLI bug report
-description: Report a BharatCode CLI or OpenCode plugin issue with redacted diagnostics.
+description: Report a BharatCode CLI or provider runtime issue with redacted diagnostics.
 title: "[cli] "
 labels: ["bug", "cli"]
 body:
