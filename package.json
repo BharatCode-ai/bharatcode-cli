@@ -24,6 +24,7 @@
     "lib/bharatcode-auth.js",
     "lib/cli-args.js",
     "lib/opencode-config.js",
+    "lib/doctor.js",
     "docs/setup.md",
     "docs/compatibility.md",
     "README.md",
