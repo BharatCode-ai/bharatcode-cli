@@ -62,13 +62,19 @@ npm run pack:check
 node -e "import('./index.js').then(m => console.log(typeof m.default, typeof m.BharatCodePlugin))"
 ```
 
-Publishing is intentionally explicit:
+Publishing is intentionally explicit and fail-closed:
 
-1. Bump `package.json` if the version already exists on npm.
-2. Create and publish a GitHub Release such as `v0.2.10`.
-3. The workflow runs tests, the public repo audit, package inspection, a dry-run
-   publish, then `npm publish --access public --provenance`.
-4. Manual `workflow_dispatch` defaults to dry-run mode.
+1. Review the exact source SHA, then create the immutable `cli-v0.2.10` tag at
+   that same commit while it is still the exact `main` head.
+2. Dispatch `Publish npm package` with that exact SHA and tag. Re-runs are
+   rejected rather than replaying a partially completed publication.
+3. The token-free build job tests, audits, inspects, packs, hashes, and attests
+   the exact tarball once.
+4. The protected `npm-next` job publishes that tarball to `next`, downloads it
+   from the real registry, and verifies its SHA-256 and registry identity.
+5. Only the separately protected `npm-latest` job can move the same version to
+   `latest`, after revalidating the closed next-stage receipt. Version `0.2.9`
+   remains available as the rollback version.
 
-The workflow requires the `NPM_TOKEN` repository secret. It does not run on
-ordinary pushes.
+`NPM_TOKEN` is exposed only to the two mutation steps. The workflow does not run
+on pushes or GitHub Release events and cannot overwrite an existing version.

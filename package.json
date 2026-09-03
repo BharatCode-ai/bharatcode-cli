@@ -14,6 +14,7 @@
     "test": "node --test test/*.test.js",
     "audit:oss": "node scripts/audit-open-source-readiness.mjs",
     "audit:oss:repo": "node scripts/audit-open-source-readiness.mjs --repo-visibility",
+    "audit:release": "node --test test/npm-release-contract.test.js test/release-and-branding.test.js",
     "export:oss:cli": "node scripts/export-cli-public-repo.mjs",
     "smoke": "node -e \"import('./index.js').then(m => console.log(typeof m.default, typeof m.BharatCodePlugin))\"",
     "pack:check": "npm pack --dry-run"

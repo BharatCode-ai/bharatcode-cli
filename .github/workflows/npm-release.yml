@@ -1,37 +1,75 @@
 name: Publish npm package
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: "Run all release checks and npm publish dry-run only"
+      source_sha:
+        description: Exact reviewed 40-hex source SHA tagged cli-v0.2.10
         required: true
-        type: boolean
-        default: true
+        type: string
+      release_tag:
+        description: Exact immutable release tag
+        required: true
+        default: cli-v0.2.10
+        type: string
 
 permissions:
   contents: read
-  id-token: write
+
+env:
+  PACKAGE_NAME: bharatcode
+  PACKAGE_VERSION: 0.2.10
+  RELEASE_TAG: cli-v0.2.10
+  ROLLBACK_VERSION: 0.2.9
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  WORKFLOW_PATH: .github/workflows/npm-release.yml
 
 jobs:
-  publish:
-    name: Publish bharatcode
-    runs-on: ubuntu-latest
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  admit-source:
+    name: Admit exact reviewed source
+    runs-on: ubuntu-24.04
+    outputs:
+      package_sha: ${{ steps.pack.outputs.package_sha }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
+      - name: Check out exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Install dependencies
+      - name: Verify exact immutable release identity
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import { validateDispatch } from "./scripts/npm-release-contract.mjs"
+          validateDispatch({ event: process.env.EVENT_NAME, run_attempt: process.env.RUN_ATTEMPT, source_sha: process.env.SOURCE_SHA, tag: process.env.RELEASE_TAG, version: process.env.PACKAGE_VERSION })
+          EOF
+          test "${{ inputs.release_tag }}" = "$RELEASE_TAG"
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(node -p "require('./package.json').name")" = "$PACKAGE_NAME"
+          test "$(node -p "require('./package.json').version")" = "$PACKAGE_VERSION"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$SOURCE_SHA"
+          tag_target="$(git ls-remote origin "refs/tags/$RELEASE_TAG^{}" | cut -f1)"
+          test -n "$tag_target" || tag_target="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | cut -f1)"
+          test "$tag_target" = "$SOURCE_SHA"
+
+      - name: Install exact dependencies
         run: npm ci
 
       - name: Run tests
@@ -43,25 +81,182 @@ jobs:
       - name: Check package contents
         run: npm run pack:check
 
-      - name: Verify npm token
+      - name: Pack exact package once
+        id: pack
         run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "NPM_TOKEN repository secret is required for npm publish."
+          set -euo pipefail
+          pack_json="$(npm pack --json)"
+          tarball="$(node -e 'const value=JSON.parse(process.argv[1]); if(value.length!==1) process.exit(1); process.stdout.write(value[0].filename)' "$pack_json")"
+          test "$tarball" = "bharatcode-0.2.10.tgz"
+          package_sha="$(sha256sum "$tarball" | cut -d " " -f1)"
+          printf '%s  %s\n' "$package_sha" "$tarball" > "$tarball.sha256"
+          printf 'package_sha=%s\n' "$package_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Attest exact package
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: bharatcode-0.2.10.tgz
+
+      - name: Upload immutable package input
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bharatcode-cli-package-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            bharatcode-0.2.10.tgz
+            bharatcode-0.2.10.tgz.sha256
+
+  publish-next:
+    name: Publish protected next candidate
+    needs: admit-source
+    runs-on: ubuntu-24.04
+    environment: npm-next
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download exact package input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bharatcode-cli-package-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Revalidate package and rollback availability
+        run: |
+          set -euo pipefail
+          sha256sum --check bharatcode-0.2.10.tgz.sha256
+          test "$(sha256sum bharatcode-0.2.10.tgz | cut -d " " -f1)" = "${{ needs.admit-source.outputs.package_sha }}"
+          test "$(npm view "$PACKAGE_NAME@$ROLLBACK_VERSION" version)" = "$ROLLBACK_VERSION"
+          if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+            echo "Exact version already exists; refusing replay or overwrite." >&2
             exit 1
           fi
 
-      - name: Verify package version is unpublished
+      - name: Publish exact tarball to next
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          PACKAGE_NAME="$(node -p "require('./package.json').name")"
-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
-            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published. Bump package.json before release."
-            exit 1
-          fi
+          set -euo pipefail
+          test -n "$NODE_AUTH_TOKEN"
+          npm publish bharatcode-0.2.10.tgz --tag next --access public --provenance
 
-      - name: Dry-run npm publish
-        run: npm publish --dry-run --access public
+      - name: Verify real registry tarball and next tag
+        id: registry
+        run: |
+          set -euo pipefail
+          for delay in 2 4 8 16 30; do
+            next="$(npm view "$PACKAGE_NAME" dist-tags.next 2>/dev/null || true)"
+            test "$next" = "$PACKAGE_VERSION" && break
+            sleep "$delay"
+          done
+          test "$(npm view "$PACKAGE_NAME" dist-tags.next)" = "$PACKAGE_VERSION"
+          tarball="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.tarball)"
+          integrity="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.integrity)"
+          test "$tarball" = "https://registry.npmjs.org/bharatcode/-/bharatcode-0.2.10.tgz"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$tarball" --output registry.tgz
+          test "$(sha256sum registry.tgz | cut -d " " -f1)" = "${{ needs.admit-source.outputs.package_sha }}"
+          printf 'tarball=%s\nintegrity=%s\n' "$tarball" "$integrity" >> "$GITHUB_OUTPUT"
 
-      - name: Publish npm package
-        if: ${{ github.event_name == 'release' || inputs.dry_run == false }}
-        run: npm publish --access public --provenance
+      - name: Create closed next receipt
+        env:
+          PACKAGE_SHA: ${{ needs.admit-source.outputs.package_sha }}
+          REGISTRY_INTEGRITY: ${{ steps.registry.outputs.integrity }}
+          REGISTRY_TARBALL: ${{ steps.registry.outputs.tarball }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { canonicalJson, createNextReceipt } from "./scripts/npm-release-contract.mjs"
+          import { writeFileSync } from "node:fs"
+          const value = createNextReceipt({ completed_at: new Date().toISOString(), dispatch: { event: "workflow_dispatch", run_attempt: process.env.RUN_ATTEMPT, source_sha: process.env.SOURCE_SHA, tag: process.env.RELEASE_TAG, version: process.env.PACKAGE_VERSION }, package_sha256: process.env.PACKAGE_SHA, registry_integrity: process.env.REGISTRY_INTEGRITY, registry_tarball: process.env.REGISTRY_TARBALL, run_id: process.env.RUN_ID })
+          writeFileSync("bharatcode-cli-npm-next.json", canonicalJson(value), { mode: 0o600 })
+          EOF
+
+      - name: Attest next receipt
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: bharatcode-cli-npm-next.json
+
+      - name: Upload protected next receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bharatcode-cli-next-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: bharatcode-cli-npm-next.json
+
+  promote-latest:
+    name: Promote verified next package to latest
+    needs: [admit-source, publish-next]
+    runs-on: ubuntu-24.04
+    environment: npm-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download exact package input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bharatcode-cli-package-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Download protected next receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bharatcode-cli-next-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Revalidate exact next publication
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          sha256sum --check bharatcode-0.2.10.tgz.sha256
+          node --input-type=module <<'EOF'
+          import { parseCanonicalJson, validateNextReceipt } from "./scripts/npm-release-contract.mjs"
+          import { readFileSync } from "node:fs"
+          const digest = readFileSync("bharatcode-0.2.10.tgz.sha256", "utf8").split(" ")[0]
+          validateNextReceipt(parseCanonicalJson(readFileSync("bharatcode-cli-npm-next.json")), { package_sha256: digest, run_attempt: process.env.RUN_ATTEMPT, run_id: process.env.RUN_ID, source_sha: process.env.SOURCE_SHA })
+          EOF
+          test "$(npm view "$PACKAGE_NAME" dist-tags.next)" = "$PACKAGE_VERSION"
+          test "$(npm view "$PACKAGE_NAME" dist-tags.latest)" = "$ROLLBACK_VERSION"
+          tarball="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.tarball)"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$tarball" --output registry.tgz
+          test "$(sha256sum registry.tgz | cut -d " " -f1)" = "${{ needs.admit-source.outputs.package_sha }}"
+
+      - name: Promote the same immutable version to latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$NODE_AUTH_TOKEN"
+          npm dist-tag add bharatcode@0.2.10 latest
+
+      - name: Verify latest and preserved rollback
+        run: |
+          set -euo pipefail
+          test "$(npm view "$PACKAGE_NAME" dist-tags.latest)" = "$PACKAGE_VERSION"
+          test "$(npm view "$PACKAGE_NAME@$ROLLBACK_VERSION" version)" = "$ROLLBACK_VERSION"

@@ -11,23 +11,30 @@ async function readText(relativePath) {
   return readFile(resolve(repoRoot, relativePath), "utf8")
 }
 
-test("npm release workflow publishes only from explicit release channels", async () => {
+test("npm release workflow protects next smoke and latest promotion", async () => {
   const workflowPath = resolve(repoRoot, ".github/workflows/npm-release.yml")
   assert.equal(existsSync(workflowPath), true, "npm release workflow should exist")
 
   const workflow = await readText(".github/workflows/npm-release.yml")
   assert.match(workflow, /name:\s*Publish npm package/)
-  assert.match(workflow, /release:\s*\n\s*types:\s*\[published\]/)
   assert.match(workflow, /workflow_dispatch:/)
   assert.doesNotMatch(workflow, /^\s*push:/m)
+  assert.doesNotMatch(workflow, /^\s*release:/m)
   assert.match(workflow, /id-token:\s*write/)
   assert.match(workflow, /registry-url:\s*["']https:\/\/registry\.npmjs\.org["']/)
   assert.match(workflow, /npm test/)
   assert.match(workflow, /npm run audit:oss:repo/)
   assert.match(workflow, /npm run pack:check/)
-  assert.match(workflow, /npm publish --dry-run --access public/)
-  assert.match(workflow, /npm publish --access public --provenance/)
+  assert.match(workflow, /npm publish .*--tag next --access public --provenance/)
+  assert.match(workflow, /npm dist-tag add bharatcode@0\.2\.10 latest/)
+  assert.match(workflow, /environment:\s*npm-next/)
+  assert.match(workflow, /environment:\s*npm-latest/)
+  assert.match(workflow, /cli-v0\.2\.10/)
+  assert.match(workflow, /0\.2\.9/)
   assert.match(workflow, /NPM_TOKEN/)
+  assert.equal(workflow.match(/NODE_AUTH_TOKEN:/g)?.length, 2)
+  assert.doesNotMatch(workflow, /^ {0,8}NODE_AUTH_TOKEN:/m)
+  assert.doesNotMatch(workflow, /--force|--ignore-scripts/)
 })
 
 test("package metadata describes the BharatCode CLI release boundary", async () => {
