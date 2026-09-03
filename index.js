@@ -22,6 +22,15 @@ function configuredModel(value) {
   throw new Error(`BharatCode supports only ${MODEL}. Retired model IDs are not translated.`)
 }
 
+function validateExistingConfigModels(config) {
+  for (const field of ["model", "small_model"]) {
+    const model = config?.[field]
+    if (typeof model !== "string") continue
+    if (model === MODEL || model === MODEL_ID) continue
+    if (model.startsWith(`${PROVIDER_ID}/`) || model.startsWith(`${PROVIDER_ID}:`)) configuredModel(model)
+  }
+}
+
 function explicitApiKey(options) {
   return (
     options?.accessToken ||
@@ -82,6 +91,7 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
 
   return {
     config: async (config) => {
+      validateExistingConfigModels(config)
       const selectedModel = configuredModel(options.model)
       const selectedSmallModel = configuredModel(options.small_model ?? selectedModel)
       const providerOptions = {

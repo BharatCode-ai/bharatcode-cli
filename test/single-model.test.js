@@ -39,3 +39,56 @@ test("retired model IDs fail clearly and are never rewritten", async () => {
     }
   }
 })
+
+test("stale BharatCode config fields fail without mutation or auth/network side effects", async () => {
+  const ids = [
+    "bharatcode:qwen36-35b-q6-256k-vision",
+    "bharatcode:qwen36-35b-q8-256k",
+    "bharatcode:embed-small-v1",
+    "bharatcode:unknown-coding-model",
+  ]
+
+  for (const field of ["model", "small_model"]) {
+    for (const id of ids) {
+      for (const value of [id, `bharatcode/${id}`]) {
+        let fetchCount = 0
+        const config = {
+          [field]: value,
+          unrelated: { provider: "external", enabled: true },
+          provider: { external: { models: { existing: {} } } },
+        }
+        const before = JSON.stringify(config)
+        const plugin = await BharatCodePlugin(null, {
+          fetchImpl: async () => {
+            fetchCount += 1
+            throw new Error("must not fetch")
+          },
+        })
+
+        await assert.rejects(plugin.config(config), /bharatcode\/bharatcode:qwen36-35b-awq-200k.*not translated/)
+        assert.equal(JSON.stringify(config), before)
+        assert.equal(fetchCount, 0)
+      }
+    }
+  }
+})
+
+test("canonical existing config fields are idempotent", async () => {
+  const config = { model: CODING_MODEL, small_model: CODING_MODEL }
+  const plugin = await BharatCodePlugin(null, { accessToken: "test-token" })
+
+  await plugin.config(config)
+
+  assert.equal(config.model, CODING_MODEL)
+  assert.equal(config.small_model, CODING_MODEL)
+})
+
+test("unrelated provider config retains the prior plugin behavior", async () => {
+  const config = { model: "external/model", unrelated: { keep: true } }
+  const plugin = await BharatCodePlugin(null, { accessToken: "test-token" })
+
+  await plugin.config(config)
+
+  assert.equal(config.model, CODING_MODEL)
+  assert.deepEqual(config.unrelated, { keep: true })
+})
