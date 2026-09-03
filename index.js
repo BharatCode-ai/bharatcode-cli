@@ -1,8 +1,7 @@
 import { getAccessToken } from "./lib/bharatcode-auth.js"
 
 const PROVIDER_ID = "bharatcode"
-const MODEL_ID = "bharatcode:qwen36-35b-q6-256k-vision"
-const LEGACY_MODEL_ID = "bharatcode:qwen36-35b-q8-256k"
+const MODEL_ID = "bharatcode:qwen36-35b-awq-200k"
 const MODEL = `${PROVIDER_ID}/${MODEL_ID}`
 const DEFAULT_BASE_URL = "https://bharatcode.ai/api/model/v1"
 const OAUTH_PROVIDER_API_KEY = "bharatcode-oauth"
@@ -15,6 +14,12 @@ const MODEL_CAPABILITIES = {
     input: ["text", "image"],
     output: ["text"],
   },
+}
+
+function configuredModel(value) {
+  const model = value === undefined ? MODEL : value
+  if (model === MODEL) return model
+  throw new Error(`BharatCode supports only ${MODEL}. Retired model IDs are not translated.`)
 }
 
 function explicitApiKey(options) {
@@ -77,8 +82,8 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
 
   return {
     config: async (config) => {
-      const selectedModel = options.model || MODEL
-      const selectedSmallModel = options.small_model || selectedModel
+      const selectedModel = configuredModel(options.model)
+      const selectedSmallModel = configuredModel(options.small_model ?? selectedModel)
       const providerOptions = {
         baseURL: options.baseURL || DEFAULT_BASE_URL,
         timeout: options.timeout ?? 1800000,
@@ -127,15 +132,7 @@ export const BharatCodePlugin = async (_ctx, options = {}) => {
             ...MODEL_CAPABILITIES,
             limit: {
               context: options.context ?? 200000,
-              output: options.output ?? 32768,
-            },
-          },
-          [LEGACY_MODEL_ID]: {
-            name: "BharatCode legacy Q8 model id compatibility alias",
-            ...MODEL_CAPABILITIES,
-            limit: {
-              context: options.context ?? 200000,
-              output: options.output ?? 32768,
+              output: options.output ?? 32000,
             },
           },
         },
