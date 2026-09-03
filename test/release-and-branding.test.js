@@ -61,6 +61,22 @@ test("npm release workflow protects next smoke and latest promotion", async () =
   )
 })
 
+test("an ambiguous next publish failure retains its gate receipt without becoming success", async () => {
+  const workflow = await readText(".github/workflows/npm-release.yml")
+  const publishStart = workflow.indexOf("- name: Revalidate Pankaj approval and tag, then publish exact tarball to next")
+  const retainStart = workflow.indexOf("- name: Retain protected next gate receipt")
+  const registryStart = workflow.indexOf("- name: Verify real registry tarball and next tag")
+  assert.ok(publishStart >= 0 && publishStart < retainStart && retainStart < registryStart)
+
+  const publishStep = workflow.slice(publishStart, retainStart)
+  const retentionStep = workflow.slice(retainStart, registryStart)
+  assert.doesNotMatch(publishStep, /continue-on-error:\s*true/)
+  assert.doesNotMatch(publishStep, /npm publish[^\n]*(?:\|\|\s*true|;\s*true)/)
+  assert.match(retentionStep, /if:\s*\$\{\{\s*always\(\)\s*\}\}/)
+  assert.match(retentionStep, /if-no-files-found:\s*error/)
+  assert.match(retentionStep, /path:\s*bharatcode-cli-npm-next-gate\.json/)
+})
+
 test("npm release review authority is split and cannot authorize itself", async () => {
   const policy = await readText("docs/release-review-authority.md")
 

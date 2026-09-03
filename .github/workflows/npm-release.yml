@@ -164,6 +164,7 @@ jobs:
           npm publish bharatcode-0.2.10.tgz --tag next --access public --provenance
 
       - name: Retain protected next gate receipt
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bharatcode-cli-next-gate-${{ github.run_id }}-${{ github.run_attempt }}

@@ -27,6 +27,8 @@ retains a canonical gate receipt with the exact repository, environment,
 reviewer login, source SHA, workflow path, run ID, run attempt, validation time,
 tag-object SHA, and package or `next`-receipt SHA-256. Missing, bypassed,
 mismatched, self-approved, or replayed review evidence keeps that stage blocked.
+Both receipt-upload steps use an always-run failure path: an ambiguous npm
+failure stays failed but cannot skip retention of a receipt already written.
 
 The release tag must be an annotated tag object named `cli-v0.2.10` that peels
 directly to the exact reviewed source commit. Admission records the tag-object

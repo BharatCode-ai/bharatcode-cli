@@ -34,8 +34,10 @@ environment and exact assigned reviewer, with no initiator/source self-review.
 The initial scoped run failed because the new approval, tag, smoke-receipt, and
 workflow gates did not exist. After implementation:
 
-- Release contract and workflow tests: 49/49 pass.
-- Full package tests: 63/63 pass under Node 22.18.0.
+- Release contract and workflow tests: 50/50 pass, including an ambiguous
+  publish-failure regression that requires always-run gate-receipt retention
+  without suppressing the failed npm command.
+- Full package tests: 64/64 pass under Node 22.18.0.
 - Exact package harness: pass under pinned npm 10.9.2 materialized in a
   disposable directory with Bun, because the host `/usr/bin/npm` installation
   was missing its own `semver` dependency.
