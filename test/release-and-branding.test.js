@@ -16,6 +16,7 @@ test("npm release workflow protects next smoke and latest promotion", async () =
   assert.equal(existsSync(workflowPath), true, "npm release workflow should exist")
 
   const workflow = await readText(".github/workflows/npm-release.yml")
+  const installedSmoke = await readText("scripts/verify-installed-cli.mjs")
   assert.match(workflow, /name:\s*Publish npm package/)
   assert.match(workflow, /workflow_dispatch:/)
   assert.doesNotMatch(workflow, /^\s*push:/m)
@@ -29,12 +30,35 @@ test("npm release workflow protects next smoke and latest promotion", async () =
   assert.match(workflow, /npm dist-tag add bharatcode@0\.2\.10 latest/)
   assert.match(workflow, /environment:\s*npm-next/)
   assert.match(workflow, /environment:\s*npm-latest/)
+  assert.equal(workflow.match(/actions:\s*read/g)?.length, 2)
+  const runtimeChecks = [...workflow.matchAll(/node scripts\/verify-npm-release-runtime\.mjs/g)].map((match) => match.index)
+  assert.equal(runtimeChecks.length, 3)
+  assert.match(workflow, /REQUIRED_REVIEWER:\s*Pankaj-IIT/)
+  assert.match(workflow, /REQUIRED_REVIEWER:\s*satyamlohiya/)
+  assert.equal(workflow.match(/ADMITTED_TAG_OBJECT_SHA:/g)?.length, 2)
+  assert.match(workflow, /bharatcode-cli-registry-smoke\.json/)
+  assert.match(workflow, /bharatcode-cli-next-gate-/)
+  assert.match(workflow, /bharatcode-cli-latest-gate-/)
+  assert.match(workflow, /npm install[\s\S]*--registry=https:\/\/registry\.npmjs\.org "\$PACKAGE_NAME@\$PACKAGE_VERSION"/)
+  assert.match(installedSmoke, /\["--version"\]/)
+  assert.match(installedSmoke, /qwen36-35b-q6-256k-vision/)
+  assert.match(installedSmoke, /qwen36-35b-q8-256k/)
+  assert.equal(workflow.match(/RELEASE_SUBJECT_SHA256:/g)?.length, 2)
   assert.match(workflow, /cli-v0\.2\.10/)
   assert.match(workflow, /0\.2\.9/)
   assert.match(workflow, /NPM_TOKEN/)
   assert.equal(workflow.match(/NODE_AUTH_TOKEN:/g)?.length, 2)
   assert.doesNotMatch(workflow, /^ {0,8}NODE_AUTH_TOKEN:/m)
   assert.doesNotMatch(workflow, /--force|--ignore-scripts/)
+  assert.ok(
+    runtimeChecks[1] < workflow.indexOf("npm publish bharatcode-0.2.10.tgz") &&
+      workflow.indexOf("npm publish bharatcode-0.2.10.tgz") < runtimeChecks[2],
+    "approval and tag checks must precede npm publish",
+  )
+  assert.ok(
+    runtimeChecks[2] < workflow.indexOf("npm dist-tag add bharatcode@0.2.10 latest"),
+    "independent approval and tag checks must precede latest promotion",
+  )
 })
 
 test("npm release review authority is split and cannot authorize itself", async () => {
@@ -44,6 +68,10 @@ test("npm release review authority is split and cannot authorize itself", async 
   assert.match(policy, /`npm-latest` requires a separate approval from `satyamlohiya`/)
   assert.match(policy, /`prevent_self_review` enabled/)
   assert.match(policy, /administrator bypass is not accepted as review evidence/i)
+  assert.match(policy, /authoritative\s+workflow-run review history/i)
+  assert.match(policy, /annotated tag object/i)
+  assert.match(policy, /registry-installed\s+behavioral smoke/i)
+  assert.match(policy, /no tag ruleset is currently configured/i)
   assert.match(policy, /Approval for\s+`npm-next` cannot be reused for `npm-latest`/)
   assert.match(policy, /assignment does not authorize publication by itself/i)
   assert.match(policy, /None of\s+these assignments permits a workflow dispatch, npm publication, dist-tag\s+change/i)

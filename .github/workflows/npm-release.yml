@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       package_sha: ${{ steps.pack.outputs.package_sha }}
+      tag_object_sha: ${{ steps.identity.outputs.tag_object_sha }}
     permissions:
       contents: read
       id-token: write
@@ -49,8 +50,10 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Verify exact immutable release identity
+        id: identity
         env:
           EVENT_NAME: ${{ github.event_name }}
+          GITHUB_TOKEN: ${{ github.token }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
@@ -65,9 +68,8 @@ jobs:
           test "$(node -p "require('./package.json').name")" = "$PACKAGE_NAME"
           test "$(node -p "require('./package.json').version")" = "$PACKAGE_VERSION"
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$SOURCE_SHA"
-          tag_target="$(git ls-remote origin "refs/tags/$RELEASE_TAG^{}" | cut -f1)"
-          test -n "$tag_target" || tag_target="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | cut -f1)"
-          test "$tag_target" = "$SOURCE_SHA"
+          tag_object_sha="$(node scripts/verify-npm-release-runtime.mjs --tag-only)"
+          printf 'tag_object_sha=%s\n' "$tag_object_sha" >> "$GITHUB_OUTPUT"
 
       - name: Install exact dependencies
         run: npm ci
@@ -113,6 +115,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: npm-next
     permissions:
+      actions: read
       contents: read
       id-token: write
       attestations: write
@@ -145,13 +148,28 @@ jobs:
             exit 1
           fi
 
-      - name: Publish exact tarball to next
+      - name: Revalidate Pankaj approval and tag, then publish exact tarball to next
         env:
+          ADMITTED_TAG_OBJECT_SHA: ${{ needs.admit-source.outputs.tag_object_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_ENVIRONMENT: npm-next
+          RELEASE_GATE_RECEIPT: bharatcode-cli-npm-next-gate.json
+          RELEASE_SUBJECT_SHA256: ${{ needs.admit-source.outputs.package_sha }}
+          REQUIRED_REVIEWER: Pankaj-IIT
         run: |
           set -euo pipefail
           test -n "$NODE_AUTH_TOKEN"
+          node scripts/verify-npm-release-runtime.mjs
           npm publish bharatcode-0.2.10.tgz --tag next --access public --provenance
+
+      - name: Retain protected next gate receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bharatcode-cli-next-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: bharatcode-cli-npm-next-gate.json
 
       - name: Verify real registry tarball and next tag
         id: registry
@@ -170,6 +188,41 @@ jobs:
           test "$(sha256sum registry.tgz | cut -d " " -f1)" = "${{ needs.admit-source.outputs.package_sha }}"
           printf 'tarball=%s\nintegrity=%s\n' "$tarball" "$integrity" >> "$GITHUB_OUTPUT"
 
+      - name: Install and test the exact real-registry tarball
+        env:
+          PACKAGE_SHA: ${{ needs.admit-source.outputs.package_sha }}
+        run: |
+          set -euo pipefail
+          smoke_root="$(mktemp -d)"
+          trap 'rm -rf "$smoke_root"' EXIT
+          credentials="$smoke_root/home/.bharatcode/credentials.json"
+          mkdir -p "$(dirname "$credentials")"
+          printf '{"sentinel":true}\n' > "$credentials"
+          HOME="$smoke_root/home" npm install --prefix "$smoke_root/install" --no-save \
+            --registry=https://registry.npmjs.org "$PACKAGE_NAME@$PACKAGE_VERSION"
+          HOME="$smoke_root/home" \
+            BHARATCODE_CREDENTIALS_PATH="$credentials" \
+            SMOKE_RESULT_PATH="$PWD/registry-smoke-result.json" \
+            node scripts/verify-installed-cli.mjs "$smoke_root/install/node_modules/bharatcode"
+          test "$(sha256sum registry.tgz | cut -d " " -f1)" = "$PACKAGE_SHA"
+
+      - name: Create bound registry smoke receipt
+        env:
+          PACKAGE_SHA: ${{ needs.admit-source.outputs.package_sha }}
+          REGISTRY_INTEGRITY: ${{ steps.registry.outputs.integrity }}
+          REGISTRY_TARBALL: ${{ steps.registry.outputs.tarball }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          TAG_OBJECT_SHA: ${{ needs.admit-source.outputs.tag_object_sha }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { canonicalJson, createRegistrySmokeReceipt } from "./scripts/npm-release-contract.mjs"
+          import { readFileSync, writeFileSync } from "node:fs"
+          const smoke = JSON.parse(readFileSync("registry-smoke-result.json", "utf8"))
+          const value = createRegistrySmokeReceipt({ completed_at: new Date().toISOString(), dispatch: { event: "workflow_dispatch", run_attempt: process.env.RUN_ATTEMPT, source_sha: process.env.SOURCE_SHA, tag: process.env.RELEASE_TAG, version: process.env.PACKAGE_VERSION }, package_sha256: process.env.PACKAGE_SHA, registry_integrity: process.env.REGISTRY_INTEGRITY, registry_tarball: process.env.REGISTRY_TARBALL, run_id: process.env.RUN_ID, smoke, tag_object_sha: process.env.TAG_OBJECT_SHA })
+          writeFileSync("bharatcode-cli-registry-smoke.json", canonicalJson(value), { mode: 0o600 })
+          EOF
+
       - name: Create closed next receipt
         env:
           PACKAGE_SHA: ${{ needs.admit-source.outputs.package_sha }}
@@ -179,16 +232,19 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           node --input-type=module <<'EOF'
-          import { canonicalJson, createNextReceipt } from "./scripts/npm-release-contract.mjs"
-          import { writeFileSync } from "node:fs"
-          const value = createNextReceipt({ completed_at: new Date().toISOString(), dispatch: { event: "workflow_dispatch", run_attempt: process.env.RUN_ATTEMPT, source_sha: process.env.SOURCE_SHA, tag: process.env.RELEASE_TAG, version: process.env.PACKAGE_VERSION }, package_sha256: process.env.PACKAGE_SHA, registry_integrity: process.env.REGISTRY_INTEGRITY, registry_tarball: process.env.REGISTRY_TARBALL, run_id: process.env.RUN_ID })
+          import { canonicalJson, createNextReceipt, sha256 } from "./scripts/npm-release-contract.mjs"
+          import { readFileSync, writeFileSync } from "node:fs"
+          const registrySmokeSha256 = sha256(readFileSync("bharatcode-cli-registry-smoke.json"))
+          const value = createNextReceipt({ completed_at: new Date().toISOString(), dispatch: { event: "workflow_dispatch", run_attempt: process.env.RUN_ATTEMPT, source_sha: process.env.SOURCE_SHA, tag: process.env.RELEASE_TAG, version: process.env.PACKAGE_VERSION }, package_sha256: process.env.PACKAGE_SHA, registry_integrity: process.env.REGISTRY_INTEGRITY, registry_smoke_sha256: registrySmokeSha256, registry_tarball: process.env.REGISTRY_TARBALL, run_id: process.env.RUN_ID })
           writeFileSync("bharatcode-cli-npm-next.json", canonicalJson(value), { mode: 0o600 })
           EOF
 
-      - name: Attest next receipt
+      - name: Attest next and registry smoke receipts
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
-          subject-path: bharatcode-cli-npm-next.json
+          subject-path: |
+            bharatcode-cli-npm-next.json
+            bharatcode-cli-registry-smoke.json
 
       - name: Upload protected next receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -196,7 +252,9 @@ jobs:
           name: bharatcode-cli-next-receipt-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
           retention-days: 30
-          path: bharatcode-cli-npm-next.json
+          path: |
+            bharatcode-cli-npm-next.json
+            bharatcode-cli-registry-smoke.json
 
   promote-latest:
     name: Promote verified next package to latest
@@ -204,6 +262,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: npm-latest
     permissions:
+      actions: read
       contents: read
     steps:
       - name: Check out exact source
@@ -229,30 +288,44 @@ jobs:
           name: bharatcode-cli-next-receipt-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Revalidate exact next publication
+        id: next
         env:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
+          TAG_OBJECT_SHA: ${{ needs.admit-source.outputs.tag_object_sha }}
         run: |
           set -euo pipefail
           sha256sum --check bharatcode-0.2.10.tgz.sha256
           node --input-type=module <<'EOF'
-          import { parseCanonicalJson, validateNextReceipt } from "./scripts/npm-release-contract.mjs"
+          import { parseCanonicalJson, sha256, validateNextReceipt, validateRegistrySmokeReceipt } from "./scripts/npm-release-contract.mjs"
           import { readFileSync } from "node:fs"
           const digest = readFileSync("bharatcode-0.2.10.tgz.sha256", "utf8").split(" ")[0]
-          validateNextReceipt(parseCanonicalJson(readFileSync("bharatcode-cli-npm-next.json")), { package_sha256: digest, run_attempt: process.env.RUN_ATTEMPT, run_id: process.env.RUN_ID, source_sha: process.env.SOURCE_SHA })
+          const smokeBytes = readFileSync("bharatcode-cli-registry-smoke.json")
+          const next = validateNextReceipt(parseCanonicalJson(readFileSync("bharatcode-cli-npm-next.json")), { package_sha256: digest, registry_smoke_sha256: sha256(smokeBytes), run_attempt: process.env.RUN_ATTEMPT, run_id: process.env.RUN_ID, source_sha: process.env.SOURCE_SHA })
+          validateRegistrySmokeReceipt(parseCanonicalJson(smokeBytes), { package_sha256: digest, registry_integrity: next.registry_integrity, run_attempt: process.env.RUN_ATTEMPT, run_id: process.env.RUN_ID, source_sha: process.env.SOURCE_SHA, tag_object_sha: process.env.TAG_OBJECT_SHA })
           EOF
           test "$(npm view "$PACKAGE_NAME" dist-tags.next)" = "$PACKAGE_VERSION"
           test "$(npm view "$PACKAGE_NAME" dist-tags.latest)" = "$ROLLBACK_VERSION"
+          expected_integrity="$(node -p "JSON.parse(require('fs').readFileSync('bharatcode-cli-npm-next.json')).registry_integrity")"
+          test "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.integrity)" = "$expected_integrity"
           tarball="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.tarball)"
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$tarball" --output registry.tgz
           test "$(sha256sum registry.tgz | cut -d " " -f1)" = "${{ needs.admit-source.outputs.package_sha }}"
+          printf 'next_receipt_sha=%s\n' "$(sha256sum bharatcode-cli-npm-next.json | cut -d " " -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Promote the same immutable version to latest
+      - name: Revalidate Satyam approval and tag, then promote the same version to latest
         env:
+          ADMITTED_TAG_OBJECT_SHA: ${{ needs.admit-source.outputs.tag_object_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_ENVIRONMENT: npm-latest
+          RELEASE_GATE_RECEIPT: bharatcode-cli-npm-latest-gate.json
+          RELEASE_SUBJECT_SHA256: ${{ steps.next.outputs.next_receipt_sha }}
+          REQUIRED_REVIEWER: satyamlohiya
         run: |
           set -euo pipefail
           test -n "$NODE_AUTH_TOKEN"
+          node scripts/verify-npm-release-runtime.mjs
           npm dist-tag add bharatcode@0.2.10 latest
 
       - name: Verify latest and preserved rollback
@@ -260,3 +333,12 @@ jobs:
           set -euo pipefail
           test "$(npm view "$PACKAGE_NAME" dist-tags.latest)" = "$PACKAGE_VERSION"
           test "$(npm view "$PACKAGE_NAME@$ROLLBACK_VERSION" version)" = "$ROLLBACK_VERSION"
+
+      - name: Upload protected latest gate receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bharatcode-cli-latest-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: bharatcode-cli-npm-latest-gate.json
