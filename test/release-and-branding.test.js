@@ -37,6 +37,18 @@ test("npm release workflow protects next smoke and latest promotion", async () =
   assert.doesNotMatch(workflow, /--force|--ignore-scripts/)
 })
 
+test("npm release review authority is split and cannot authorize itself", async () => {
+  const policy = await readText("docs/release-review-authority.md")
+
+  assert.match(policy, /`npm-next` requires approval from `Pankaj-IIT`/)
+  assert.match(policy, /`npm-latest` requires a separate approval from `satyamlohiya`/)
+  assert.match(policy, /`prevent_self_review` enabled/)
+  assert.match(policy, /administrator bypass is not accepted as review evidence/i)
+  assert.match(policy, /Approval for\s+`npm-next` cannot be reused for `npm-latest`/)
+  assert.match(policy, /assignment does not authorize publication by itself/i)
+  assert.match(policy, /None of\s+these assignments permits a workflow dispatch, npm publication, dist-tag\s+change/i)
+})
+
 test("package metadata describes the BharatCode CLI release boundary", async () => {
   const pkg = JSON.parse(await readText("package.json"))
 
