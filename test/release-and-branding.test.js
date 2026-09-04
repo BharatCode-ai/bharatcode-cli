@@ -59,6 +59,10 @@ test("npm release workflow publishes only the signed first-class Desktop cohort"
     2,
   )
   assert.doesNotMatch(workflow, /^ {0,8}NODE_AUTH_TOKEN:/m)
+  assert.match(
+    workflow,
+    /Verify exact registry provenance without publication credentials[\s\S]*unset NODE_AUTH_TOKEN[\s\S]*\[\[ -z "\$\{NODE_AUTH_TOKEN:-\}" \]\]/,
+  )
   assert.doesNotMatch(workflow, /npm pack|opencode-ai|--force|--ignore-scripts/)
   const platformPublish = workflow.indexOf(
     'for name in "${PLATFORM_PACKAGE_NAMES[@]}"; do publish_or_verify "$name"; done',

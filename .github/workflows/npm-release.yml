@@ -205,6 +205,7 @@ jobs:
       - name: Verify exact registry provenance without publication credentials
         run: |
           set -euo pipefail
+          unset NODE_AUTH_TOKEN
           [[ -z "${NODE_AUTH_TOKEN:-}" ]]
           mkdir registry-provenance
           mapfile -t names < <(node -e 'for (const item of JSON.parse(require("fs").readFileSync("verified-cli.json")).packages) console.log(item.name)')

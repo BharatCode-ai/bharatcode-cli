@@ -414,6 +414,10 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
     /npm@12\.0\.2 audit signatures --json --include-attestations/u,
   )
   assert.match(workflow, /npm@12\.0\.2 install --omit=optional --save-exact/u)
+  assert.match(
+    workflow,
+    /Verify exact registry provenance without publication credentials[\s\S]*unset NODE_AUTH_TOKEN[\s\S]*\[\[ -z "\$\{NODE_AUTH_TOKEN:-\}" \]\]/u,
+  )
   assert.match(workflow, /bharatcode-first-class-cli-latest\.json/u)
   assert.match(
     workflow,
