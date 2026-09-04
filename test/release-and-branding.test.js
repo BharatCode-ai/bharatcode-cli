@@ -42,6 +42,10 @@ test("npm release workflow publishes only the signed first-class Desktop cohort"
     workflow,
     /npm publish "\$package" --tag next --access public --provenance/,
   )
+  assert.match(
+    workflow,
+    /local package="\.\/release-input\/\$name-\$CLI_VERSION\.tgz"/,
+  )
   assert.match(workflow, /promote_or_verify bharatcode/)
   assert.match(workflow, /environment:\s*npm-next/)
   assert.match(workflow, /environment:\s*npm-latest/)
@@ -79,6 +83,10 @@ test("npm publication recovery converges only on byte-identical registry package
   assert.match(
     workflow,
     /npm publish "\$package" --tag next --access public --provenance/,
+  )
+  assert.match(
+    workflow,
+    /local package="\.\/release-input\/\$name-\$CLI_VERSION\.tgz"/,
   )
   assert.match(workflow, /Verify registry closure and create next receipt/)
   assert.match(workflow, /bharatcode-first-class-cli-next\.json/)

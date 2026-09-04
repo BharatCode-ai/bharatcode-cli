@@ -401,6 +401,10 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
     workflow,
     /npm publish "\$package" --tag next --access public --provenance/u,
   )
+  assert.match(
+    workflow,
+    /local package="\.\/release-input\/\$name-\$CLI_VERSION\.tgz"/u,
+  )
   assert.match(workflow, /PLATFORM_PACKAGE_NAMES/u)
   assert.match(workflow, /promote_or_verify bharatcode/u)
   assert.match(workflow, /for npm_major in 11 12/u)

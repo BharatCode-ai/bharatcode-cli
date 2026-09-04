@@ -178,7 +178,7 @@ jobs:
           mapfile -t PLATFORM_PACKAGE_NAMES < <(node --input-type=module -e 'import { PLATFORM_PACKAGE_NAMES } from "./scripts/first-class-cohort-release.mjs"; for (const name of PLATFORM_PACKAGE_NAMES) console.log(name)')
           publish_or_verify() {
             local name="$1"
-            local package="release-input/$name-$CLI_VERSION.tgz"
+            local package="./release-input/$name-$CLI_VERSION.tgz"
             local expected
             expected="$(sha256sum "$package" | cut -d ' ' -f1)"
             if npm view "$name@$CLI_VERSION" version >/dev/null 2>&1; then
