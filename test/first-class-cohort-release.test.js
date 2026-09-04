@@ -430,7 +430,11 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
     workflow,
     /npm@12\.0\.2 audit signatures --json --include-attestations/u,
   )
-  assert.match(workflow, /npm@12\.0\.2 install --omit=optional --save-exact/u)
+  assert.match(
+    workflow,
+    /npm@12\.0\.2 install --force --ignore-scripts --omit=optional --save-exact/u,
+  )
+  assert.doesNotMatch(workflow, /--os="\$os"|--cpu="\$cpu"/u)
   assert.match(
     workflow,
     /Verify exact registry provenance without publication credentials[\s\S]*unset NODE_AUTH_TOKEN[\s\S]*\[\[ -z "\$\{NODE_AUTH_TOKEN:-\}" \]\]/u,
