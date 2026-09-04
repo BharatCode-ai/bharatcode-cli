@@ -54,6 +54,10 @@ test("npm release workflow publishes only the signed first-class Desktop cohort"
     /npx --yes "npm@\$npm_major" install[\s\S]*"bharatcode@\$CLI_VERSION"/,
   )
   assert.match(workflow, /NPM_TOKEN/)
+  assert.match(
+    workflow,
+    /git merge-base --is-ancestor "\$PACKAGE_PROVENANCE_SHA" "\$CONTROLLER_SHA"/,
+  )
   assert.equal(
     workflow.match(/NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/g)?.length,
     2,

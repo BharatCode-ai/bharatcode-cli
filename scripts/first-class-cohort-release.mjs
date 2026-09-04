@@ -409,10 +409,12 @@ function decodeProvenancePayload(value) {
 export function validateNpmProvenanceAudit(value, bindings) {
   exactKeys(
     bindings,
-    ["controller_sha", "name", "version"],
+    ["controller_sha", "name", "run_attempt", "run_id", "version"],
     "npm provenance bindings",
   )
   pattern(bindings.controller_sha, SHA, "npm provenance controller SHA")
+  pattern(bindings.run_id, POSITIVE_DECIMAL, "npm provenance run ID")
+  pattern(bindings.run_attempt, POSITIVE_DECIMAL, "npm provenance run attempt")
   requireValue(
     ["bharatcode", ...PLATFORM_PACKAGE_NAMES].includes(bindings.name),
     "npm provenance package is invalid",
@@ -538,6 +540,10 @@ export function validateNpmProvenanceAudit(value, bindings) {
         )
       : null
   requireValue(match, "npm provenance invocation changed")
+  requireValue(
+    match[1] === bindings.run_id && match[2] === bindings.run_attempt,
+    "npm provenance run changed",
+  )
   return {
     name: bindings.name,
     version: bindings.version,
@@ -679,6 +685,8 @@ if (invoked) {
       name: process.argv[4],
       version: process.env.CLI_VERSION,
       controller_sha: process.env.CONTROLLER_SHA,
+      run_id: process.env.PACKAGE_PROVENANCE_RUN_ID,
+      run_attempt: process.env.PACKAGE_PROVENANCE_RUN_ATTEMPT,
     })
   } else {
     requireValue(

@@ -36,6 +36,9 @@ permissions:
 env:
   CLI_VERSION: 1.15.25
   CONTROLLER_SHA: ${{ inputs.controller_sha }}
+  PACKAGE_PROVENANCE_RUN_ATTEMPT: "1"
+  PACKAGE_PROVENANCE_RUN_ID: "33873228367"
+  PACKAGE_PROVENANCE_SHA: 0667f00d6bae748881c84e30621d4b33ddaf98a6
   DESKTOP_REPOSITORY: BharatCode-ai/bharatcode-desktop
   DESKTOP_RUN_ATTEMPT: ${{ inputs.desktop_run_attempt }}
   DESKTOP_RUN_ID: ${{ inputs.desktop_run_id }}
@@ -80,6 +83,9 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$CONTROLLER_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PACKAGE_PROVENANCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PACKAGE_PROVENANCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PACKAGE_PROVENANCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$DESKTOP_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$DESKTOP_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$DESKTOP_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
@@ -90,6 +96,7 @@ jobs:
           [[ "$EVENT_SHA" == "$CONTROLLER_SHA" ]]
           [[ "$GITHUB_SHA" == "$CONTROLLER_SHA" ]]
           [[ "$(git rev-parse HEAD)" == "$CONTROLLER_SHA" ]]
+          git merge-base --is-ancestor "$PACKAGE_PROVENANCE_SHA" "$CONTROLLER_SHA"
           [[ "$(git ls-remote origin refs/heads/main | cut -f1)" == "$CONTROLLER_SHA" ]]
           [[ -z "$(git status --porcelain)" ]]
           gh release view "$RELEASE_TAG" --repo "$DESKTOP_REPOSITORY" --json tagName,targetCommitish,isDraft,isPrerelease,assets > release-state.json
@@ -224,7 +231,7 @@ jobs:
               npx --yes npm@12.0.2 install --omit=optional --save-exact --registry=https://registry.npmjs.org --os="$os" --cpu="$cpu" "$name@$CLI_VERSION" > /dev/null
               npx --yes npm@12.0.2 audit signatures --json --include-attestations > audit.json
             )
-            node scripts/first-class-cohort-release.mjs verify-npm-provenance "$root/audit.json" "$name" > "registry-provenance/$name.json"
+          CONTROLLER_SHA="$PACKAGE_PROVENANCE_SHA" node scripts/first-class-cohort-release.mjs verify-npm-provenance "$root/audit.json" "$name" > "registry-provenance/$name.json"
             rm -rf "$root"
           }
           for name in "${names[@]}"; do verify_provenance "$name"; done

@@ -289,7 +289,15 @@ test("accepts only registry-verified npm provenance from the exact controller so
     name: "bharatcode",
     version: CLI_RELEASE.version,
     controller_sha: "e".repeat(40),
+    run_id: "123456789",
+    run_attempt: "1",
   }
+  assert.throws(() =>
+    validateNpmProvenanceAudit(provenanceAudit(), {
+      ...bindings,
+      run_id: "1",
+    }),
+  )
   assert.deepEqual(validateNpmProvenanceAudit(provenanceAudit(), bindings), {
     name: "bharatcode",
     version: CLI_RELEASE.version,
@@ -397,6 +405,15 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
     /--signer-workflow "\$DESKTOP_REPOSITORY\/\$DESKTOP_WORKFLOW"/u,
   )
   assert.match(workflow, /--source-digest "\$DESKTOP_SOURCE_SHA"/u)
+  assert.match(
+    workflow,
+    /PACKAGE_PROVENANCE_SHA: 0667f00d6bae748881c84e30621d4b33ddaf98a6/u,
+  )
+  assert.match(workflow, /PACKAGE_PROVENANCE_RUN_ID: "33873228367"/u)
+  assert.match(
+    workflow,
+    /CONTROLLER_SHA="\$PACKAGE_PROVENANCE_SHA" node scripts\/first-class-cohort-release\.mjs verify-npm-provenance/u,
+  )
   assert.match(
     workflow,
     /npm publish "\$package" --tag next --access public --provenance/u,
