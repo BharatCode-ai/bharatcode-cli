@@ -398,7 +398,7 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
     resolve(root, ".github/workflows/npm-release.yml"),
     "utf8",
   )
-  assert.match(workflow, /desktop-beta-1\.15\.25/u)
+  assert.match(workflow, /desktop-beta-1\.15\.26/u)
   assert.match(workflow, /gh attestation verify "\$subject"/u)
   assert.match(
     workflow,
@@ -407,9 +407,10 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
   assert.match(workflow, /--source-digest "\$DESKTOP_SOURCE_SHA"/u)
   assert.match(
     workflow,
-    /PACKAGE_PROVENANCE_SHA: 0667f00d6bae748881c84e30621d4b33ddaf98a6/u,
+    /PACKAGE_PROVENANCE_SHA: \$\{\{ github\.sha \}\}/u,
   )
-  assert.match(workflow, /PACKAGE_PROVENANCE_RUN_ID: "33873228367"/u)
+  assert.match(workflow, /PACKAGE_PROVENANCE_RUN_ID: \$\{\{ github\.run_id \}\}/u)
+  assert.match(workflow, /PACKAGE_PROVENANCE_RUN_ATTEMPT: \$\{\{ github\.run_attempt \}\}/u)
   assert.match(
     workflow,
     /CONTROLLER_SHA="\$PACKAGE_PROVENANCE_SHA" node scripts\/first-class-cohort-release\.mjs verify-npm-provenance/u,

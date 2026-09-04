@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       desktop_source_sha:
-        description: Exact reviewed BharatCode Desktop 1.15.25 source SHA
+        description: Exact reviewed BharatCode Desktop 1.15.26 source SHA
         required: true
         type: string
       desktop_run_id:
@@ -27,25 +27,25 @@ on:
       release_tag:
         description: Exact finalized Desktop release tag
         required: true
-        default: desktop-beta-1.15.25
+        default: desktop-beta-1.15.26
         type: string
 
 permissions:
   contents: read
 
 env:
-  CLI_VERSION: 1.15.25
+  CLI_VERSION: 1.15.26
   CONTROLLER_SHA: ${{ inputs.controller_sha }}
-  PACKAGE_PROVENANCE_RUN_ATTEMPT: "1"
-  PACKAGE_PROVENANCE_RUN_ID: "33873228367"
-  PACKAGE_PROVENANCE_SHA: 0667f00d6bae748881c84e30621d4b33ddaf98a6
+  PACKAGE_PROVENANCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+  PACKAGE_PROVENANCE_RUN_ID: ${{ github.run_id }}
+  PACKAGE_PROVENANCE_SHA: ${{ github.sha }}
   DESKTOP_REPOSITORY: BharatCode-ai/bharatcode-desktop
   DESKTOP_RUN_ATTEMPT: ${{ inputs.desktop_run_attempt }}
   DESKTOP_RUN_ID: ${{ inputs.desktop_run_id }}
   DESKTOP_SOURCE_SHA: ${{ inputs.desktop_source_sha }}
   DESKTOP_WORKFLOW: .github/workflows/bharatcode-next-beta-candidate.yml
   EXPECTED_COHORT_SHA256: ${{ inputs.cohort_sha256 }}
-  RELEASE_TAG: desktop-beta-1.15.25
+  RELEASE_TAG: desktop-beta-1.15.26
 
 jobs:
   publish-next:
