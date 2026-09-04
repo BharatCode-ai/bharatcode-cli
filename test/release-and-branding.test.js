@@ -11,68 +11,80 @@ async function readText(relativePath) {
   return readFile(resolve(repoRoot, relativePath), "utf8")
 }
 
-test("npm release workflow protects next smoke and latest promotion", async () => {
+test("npm release workflow publishes only the signed first-class Desktop cohort", async () => {
   const workflowPath = resolve(repoRoot, ".github/workflows/npm-release.yml")
-  assert.equal(existsSync(workflowPath), true, "npm release workflow should exist")
+  assert.equal(
+    existsSync(workflowPath),
+    true,
+    "npm release workflow should exist",
+  )
 
   const workflow = await readText(".github/workflows/npm-release.yml")
-  const installedSmoke = await readText("scripts/verify-installed-cli.mjs")
-  assert.match(workflow, /name:\s*Publish npm package/)
+  assert.match(workflow, /name:\s*Publish first-class BharatCode CLI cohort/)
   assert.match(workflow, /workflow_dispatch:/)
   assert.doesNotMatch(workflow, /^\s*push:/m)
   assert.doesNotMatch(workflow, /^\s*release:/m)
   assert.match(workflow, /id-token:\s*write/)
-  assert.match(workflow, /registry-url:\s*["']https:\/\/registry\.npmjs\.org["']/)
-  assert.match(workflow, /npm test/)
-  assert.match(workflow, /npm run audit:oss:repo/)
-  assert.match(workflow, /npm run pack:check/)
-  assert.match(workflow, /npm publish .*--tag next --access public --provenance/)
-  assert.match(workflow, /npm dist-tag add bharatcode@0\.2\.10 latest/)
+  assert.match(workflow, /registry-url:\s*https:\/\/registry\.npmjs\.org/)
+  assert.match(workflow, /desktop-beta-1\.15\.25/)
+  assert.match(workflow, /bharatcode-next-beta-cohort\.json/)
+  assert.match(
+    workflow,
+    /gh attestation verify release-input\/bharatcode-next-beta-cohort\.json/,
+  )
+  assert.match(workflow, /gh attestation verify "\$subject"/)
+  assert.match(workflow, /--source-digest "\$DESKTOP_SOURCE_SHA"/)
+  assert.match(
+    workflow,
+    /node scripts\/first-class-cohort-release\.mjs release-input/,
+  )
+  assert.match(
+    workflow,
+    /npm publish "\$package" --tag next --access public --provenance/,
+  )
+  assert.match(workflow, /npm dist-tag add "bharatcode@\$CLI_VERSION" latest/)
   assert.match(workflow, /environment:\s*npm-next/)
   assert.match(workflow, /environment:\s*npm-latest/)
-  assert.equal(workflow.match(/actions:\s*read/g)?.length, 2)
-  const runtimeChecks = [...workflow.matchAll(/node scripts\/verify-npm-release-runtime\.mjs/g)].map((match) => match.index)
-  assert.equal(runtimeChecks.length, 3)
-  assert.match(workflow, /REQUIRED_REVIEWER:\s*Pankaj-IIT/)
-  assert.match(workflow, /REQUIRED_REVIEWER:\s*satyamlohiya/)
-  assert.equal(workflow.match(/RELEASE_APPROVAL_MODE:\s*owner-admin-bypass-v1/g)?.length, 2)
-  assert.equal(workflow.match(/OWNER_BYPASS_ACTOR:\s*shrey16/g)?.length, 2)
-  assert.equal(workflow.match(/ADMITTED_TAG_OBJECT_SHA:/g)?.length, 2)
-  assert.match(workflow, /bharatcode-cli-registry-smoke\.json/)
-  assert.match(workflow, /bharatcode-cli-next-gate-/)
-  assert.match(workflow, /bharatcode-cli-latest-gate-/)
-  assert.match(workflow, /npm install[\s\S]*--registry=https:\/\/registry\.npmjs\.org "\$PACKAGE_NAME@\$PACKAGE_VERSION"/)
-  assert.match(installedSmoke, /\["--version"\]/)
-  assert.match(installedSmoke, /qwen36-35b-q6-256k-vision/)
-  assert.match(installedSmoke, /qwen36-35b-q8-256k/)
-  assert.equal(workflow.match(/RELEASE_SUBJECT_SHA256:/g)?.length, 2)
-  assert.match(workflow, /cli-v0\.2\.10/)
-  assert.match(workflow, /0\.2\.9/)
+  assert.match(
+    workflow,
+    /npx --yes "npm@\$npm_major" install[\s\S]*"bharatcode@\$CLI_VERSION"/,
+  )
   assert.match(workflow, /NPM_TOKEN/)
   assert.equal(workflow.match(/NODE_AUTH_TOKEN:/g)?.length, 2)
   assert.doesNotMatch(workflow, /^ {0,8}NODE_AUTH_TOKEN:/m)
-  assert.doesNotMatch(workflow, /--force|--ignore-scripts/)
-  assert.ok(
-    runtimeChecks[1] < workflow.indexOf("npm publish bharatcode-0.2.10.tgz") && workflow.indexOf("npm publish bharatcode-0.2.10.tgz") < runtimeChecks[2],
-    "approval and tag checks must precede npm publish",
+  assert.doesNotMatch(workflow, /npm pack|opencode-ai|--force|--ignore-scripts/)
+  const platformPublish = workflow.indexOf(
+    'for name in "${PLATFORM_PACKAGE_NAMES[@]}"; do publish_or_verify "$name"; done',
   )
-  assert.ok(runtimeChecks[2] < workflow.indexOf("npm dist-tag add bharatcode@0.2.10 latest"), "independent approval and tag checks must precede latest promotion")
+  const metaPublish = workflow.indexOf("publish_or_verify bharatcode")
+  const installedSmoke = workflow.indexOf("for npm_major in 11 12; do")
+  const latest = workflow.indexOf(
+    'npm dist-tag add "bharatcode@$CLI_VERSION" latest',
+  )
+  assert.ok(
+    platformPublish >= 0 &&
+      platformPublish < metaPublish &&
+      metaPublish < installedSmoke &&
+      installedSmoke < latest,
+    "platform publication, meta publication, installed smoke, and latest promotion must stay ordered",
+  )
 })
 
-test("an ambiguous next publish failure retains its gate receipt without becoming success", async () => {
+test("npm publication recovery converges only on byte-identical registry packages", async () => {
   const workflow = await readText(".github/workflows/npm-release.yml")
-  const publishStart = workflow.indexOf("- name: Revalidate protected owner bypass and tag, then publish exact tarball to next")
-  const retainStart = workflow.indexOf("- name: Retain protected next gate receipt")
-  const registryStart = workflow.indexOf("- name: Verify real registry tarball and next tag")
-  assert.ok(publishStart >= 0 && publishStart < retainStart && retainStart < registryStart)
-
-  const publishStep = workflow.slice(publishStart, retainStart)
-  const retentionStep = workflow.slice(retainStart, registryStart)
-  assert.doesNotMatch(publishStep, /continue-on-error:\s*true/)
-  assert.doesNotMatch(publishStep, /npm publish[^\n]*(?:\|\|\s*true|;\s*true)/)
-  assert.match(retentionStep, /if:\s*\$\{\{\s*always\(\)\s*\}\}/)
-  assert.match(retentionStep, /if-no-files-found:\s*error/)
-  assert.match(retentionStep, /path:\s*bharatcode-cli-npm-next-gate\.json/)
+  assert.match(workflow, /publish_or_verify\(\)/)
+  assert.match(workflow, /npm view "\$name@\$CLI_VERSION" version/)
+  assert.match(workflow, /sha256sum registry-existing\.tgz/)
+  assert.match(
+    workflow,
+    /npm publish "\$package" --tag next --access public --provenance/,
+  )
+  assert.match(workflow, /Verify registry closure and create next receipt/)
+  assert.match(workflow, /bharatcode-first-class-cli-next\.json/)
+  assert.doesNotMatch(
+    workflow,
+    /continue-on-error:\s*true|npm publish[^\n]*(?:\|\|\s*true|;\s*true)/,
+  )
 })
 
 test("npm recovery preserves the exact attempt-one package and requires an explicit admin bypass", async () => {
@@ -82,21 +94,45 @@ test("npm recovery preserves the exact attempt-one package and requires an expli
   assert.match(workflow, /name:\s*Recover npm 0\.2\.10 publication/)
   assert.match(workflow, /workflow_dispatch:/)
   assert.doesNotMatch(workflow, /^\s*push:/m)
-  assert.match(workflow, /PACKAGE_SOURCE_SHA:\s*9cb1c18535dc9cfcd49cadeeec152bd580e588e4/)
-  assert.match(workflow, /PACKAGE_SHA256:\s*c7e5352994d9b0b9a03ce8a576addeff943182a156bf89b2d78249ce904e2953/)
+  assert.match(
+    workflow,
+    /PACKAGE_SOURCE_SHA:\s*9cb1c18535dc9cfcd49cadeeec152bd580e588e4/,
+  )
+  assert.match(
+    workflow,
+    /PACKAGE_SHA256:\s*c7e5352994d9b0b9a03ce8a576addeff943182a156bf89b2d78249ce904e2953/,
+  )
   assert.match(workflow, /SOURCE_RUN_ID:\s*["']33812971614["']/)
   assert.match(workflow, /SOURCE_RUN_ATTEMPT:\s*["']1["']/)
   assert.match(workflow, /SOURCE_ARTIFACT_ID:\s*["']9915607947["']/)
-  assert.match(workflow, /SOURCE_ARTIFACT_DIGEST:\s*sha256:7cc210b4ba69cf3f7472f697b0af3456ea56b75f1a594ab85ced0b723d57a308/)
-  assert.match(workflow, /actions\/runs\/\$SOURCE_RUN_ID\/attempts\/\$SOURCE_RUN_ATTEMPT/)
-  assert.match(workflow, /validateRecoverySourceEvidence\(\{ artifacts, jobs, run \}\)/)
+  assert.match(
+    workflow,
+    /SOURCE_ARTIFACT_DIGEST:\s*sha256:7cc210b4ba69cf3f7472f697b0af3456ea56b75f1a594ab85ced0b723d57a308/,
+  )
+  assert.match(
+    workflow,
+    /actions\/runs\/\$SOURCE_RUN_ID\/attempts\/\$SOURCE_RUN_ATTEMPT/,
+  )
+  assert.match(
+    workflow,
+    /validateRecoverySourceEvidence\(\{ artifacts, jobs, run \}\)/,
+  )
   assert.doesNotMatch(workflow, /artifacts\.length\s*!==\s*1/)
   assert.match(workflow, /gh attestation verify bharatcode-0\.2\.10\.tgz/)
   assert.match(workflow, /RELEASE_CONTROLLER_SHA:\s*\$\{\{ github\.sha \}\}/)
-  assert.equal(workflow.match(/RELEASE_APPROVAL_MODE:\s*owner-admin-bypass-v1/g)?.length, 2)
+  assert.equal(
+    workflow.match(/RELEASE_APPROVAL_MODE:\s*owner-admin-bypass-v1/g)?.length,
+    2,
+  )
   assert.equal(workflow.match(/OWNER_BYPASS_ACTOR:\s*shrey16/g)?.length, 2)
-  assert.match(runtime, /collaborators\/\$\{encodeURIComponent\(bypassActor\)\}\/permission/)
-  assert.match(workflow, /npm publish bharatcode-0\.2\.10\.tgz --tag next --access public --provenance/)
+  assert.match(
+    runtime,
+    /collaborators\/\$\{encodeURIComponent\(bypassActor\)\}\/permission/,
+  )
+  assert.match(
+    workflow,
+    /npm publish bharatcode-0\.2\.10\.tgz --tag next --access public --provenance/,
+  )
   assert.match(workflow, /npm dist-tag add bharatcode@0\.2\.10 latest/)
   assert.doesNotMatch(workflow, /npm pack|gh release|git tag|git push|--force/)
 })
@@ -107,20 +143,32 @@ test("npm recovery converges without replaying an exact published package or lat
   assert.match(workflow, /id:\s*package-state/)
   assert.match(workflow, /already_published=true/)
   assert.match(workflow, /sha256sum registry-existing\.tgz/)
-  assert.match(workflow, /Exact package and next tag already exist; skipping npm publish\./)
+  assert.match(
+    workflow,
+    /Exact package and next tag already exist; skipping npm publish\./,
+  )
   assert.match(workflow, /steps\.package-state\.outputs\.already_published/)
   assert.match(workflow, /already_latest=true/)
-  assert.match(workflow, /Exact latest tag already exists; skipping dist-tag mutation\./)
+  assert.match(
+    workflow,
+    /Exact latest tag already exists; skipping dist-tag mutation\./,
+  )
   assert.match(workflow, /steps\.next\.outputs\.already_latest/)
   assert.match(workflow, /for delay in 0 2 4 8 16 30/)
-  assert.doesNotMatch(workflow, /Exact version already exists; refusing replay or overwrite/)
+  assert.doesNotMatch(
+    workflow,
+    /Exact version already exists; refusing replay or overwrite/,
+  )
 })
 
 test("npm release review authority requires explicit protected approval evidence", async () => {
   const policy = await readText("docs/release-review-authority.md")
 
   assert.match(policy, /`npm-next` requires approval from `Pankaj-IIT`/)
-  assert.match(policy, /`npm-latest` requires a separate approval from `satyamlohiya`/)
+  assert.match(
+    policy,
+    /`npm-latest` requires a separate approval from `satyamlohiya`/,
+  )
   assert.match(policy, /`prevent_self_review` enabled/)
   assert.match(policy, /owner-admin-bypass-v1/)
   assert.match(policy, /exact `shrey16` bypass actor/i)
@@ -130,15 +178,24 @@ test("npm release review authority requires explicit protected approval evidence
   assert.match(policy, /annotated tag object/i)
   assert.match(policy, /registry-installed\s+behavioral smoke/i)
   assert.match(policy, /no tag ruleset is currently configured/i)
-  assert.match(policy, /Approval or bypass evidence for\s+`npm-next` cannot be reused for `npm-latest`/)
+  assert.match(
+    policy,
+    /Approval or bypass evidence for\s+`npm-next` cannot be reused for `npm-latest`/,
+  )
   assert.match(policy, /assignment does not authorize publication by itself/i)
-  assert.match(policy, /None of\s+these assignments permits a workflow dispatch, npm publication, dist-tag\s+change/i)
+  assert.match(
+    policy,
+    /None of\s+these assignments permits a workflow dispatch, npm publication, dist-tag\s+change/i,
+  )
 })
 
 test("package metadata describes the BharatCode CLI release boundary", async () => {
   const pkg = JSON.parse(await readText("package.json"))
 
-  assert.equal(pkg.description, "BharatCode CLI for OAuth-based coding with the BharatCode public beta.")
+  assert.equal(
+    pkg.description,
+    "BharatCode CLI for OAuth-based coding with the BharatCode public beta.",
+  )
   assert.ok(pkg.files.includes("docs/setup.md"))
   assert.ok(pkg.files.includes("docs/compatibility.md"))
   assert.equal(pkg.files.includes("docs/opencode-setup.md"), false)
