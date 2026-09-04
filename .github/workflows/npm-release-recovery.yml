@@ -1,0 +1,316 @@
+name: Recover npm 0.2.10 publication
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PACKAGE_NAME: bharatcode
+  PACKAGE_VERSION: 0.2.10
+  PACKAGE_SOURCE_SHA: 9cb1c18535dc9cfcd49cadeeec152bd580e588e4
+  PACKAGE_SHA256: c7e5352994d9b0b9a03ce8a576addeff943182a156bf89b2d78249ce904e2953
+  RELEASE_TAG: cli-v0.2.10
+  ROLLBACK_VERSION: 0.2.9
+  SOURCE_ARTIFACT_DIGEST: sha256:7cc210b4ba69cf3f7472f697b0af3456ea56b75f1a594ab85ced0b723d57a308
+  SOURCE_ARTIFACT_ID: "9915607947"
+  SOURCE_ARTIFACT_NAME: bharatcode-cli-package-33812971614-1
+  SOURCE_RUN_ATTEMPT: "1"
+  SOURCE_RUN_ID: "33812971614"
+  TAG_OBJECT_SHA: b8cd4936e2c28fb73913d9f0546e0990dd1f3677
+  WORKFLOW_PATH: .github/workflows/npm-release-recovery.yml
+
+jobs:
+  admit-recovery:
+    name: Admit exact failed-run package
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+    steps:
+      - name: Check out exact recovery controller
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify immutable controller and failed source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$RUN_ATTEMPT" = 1
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT" > source-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT/jobs?per_page=100" > source-jobs.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" > source-artifacts.json
+          node --input-type=module <<'EOF'
+          import { validateRecoverySourceEvidence } from "./scripts/npm-release-contract.mjs"
+          import { readFileSync } from "node:fs"
+          const run = JSON.parse(readFileSync("source-run.json"))
+          const jobs = JSON.parse(readFileSync("source-jobs.json")).jobs
+          const artifacts = JSON.parse(readFileSync("source-artifacts.json")).artifacts
+          validateRecoverySourceEvidence({ artifacts, jobs, run })
+          EOF
+          tag_object_sha="$(SOURCE_SHA="$PACKAGE_SOURCE_SHA" GITHUB_TOKEN="$GH_TOKEN" node scripts/verify-npm-release-runtime.mjs --tag-only)"
+          test "$tag_object_sha" = "$TAG_OBJECT_SHA"
+
+      - name: Download exact immutable package input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          name: ${{ env.SOURCE_ARTIFACT_NAME }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Verify exact source package and attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(sha256sum bharatcode-0.2.10.tgz | cut -d ' ' -f1)" = "$PACKAGE_SHA256"
+          test "$(cat bharatcode-0.2.10.tgz.sha256)" = "$PACKAGE_SHA256  bharatcode-0.2.10.tgz"
+          gh attestation verify bharatcode-0.2.10.tgz --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/npm-release.yml"
+
+      - name: Upload immutable recovery package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bharatcode-cli-recovery-package-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            bharatcode-0.2.10.tgz
+            bharatcode-0.2.10.tgz.sha256
+
+  publish-next:
+    name: Recover protected next candidate
+    needs: admit-recovery
+    runs-on: ubuntu-24.04
+    environment: npm-next
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out exact recovery controller
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download admitted recovery package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bharatcode-cli-recovery-package-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Revalidate package and rollback availability
+        run: |
+          set -euo pipefail
+          test "$(sha256sum bharatcode-0.2.10.tgz | cut -d ' ' -f1)" = "$PACKAGE_SHA256"
+          test "$(npm view "$PACKAGE_NAME@$ROLLBACK_VERSION" version)" = "$ROLLBACK_VERSION"
+          if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
+            echo "Exact version already exists; refusing replay or overwrite." >&2
+            exit 1
+          fi
+
+      - name: Revalidate protected owner bypass and publish exact source tarball to next
+        env:
+          ADMITTED_TAG_OBJECT_SHA: ${{ env.TAG_OBJECT_SHA }}
+          GITHUB_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          OWNER_BYPASS_ACTOR: shrey16
+          RELEASE_APPROVAL_MODE: owner-admin-bypass-v1
+          RELEASE_CONTROLLER_SHA: ${{ github.sha }}
+          RELEASE_ENVIRONMENT: npm-next
+          RELEASE_GATE_RECEIPT: bharatcode-cli-npm-next-gate.json
+          RELEASE_SUBJECT_SHA256: ${{ env.PACKAGE_SHA256 }}
+          REQUIRED_REVIEWER: Pankaj-IIT
+          SOURCE_SHA: ${{ env.PACKAGE_SOURCE_SHA }}
+        run: |
+          set -euo pipefail
+          test -n "$NODE_AUTH_TOKEN"
+          node scripts/verify-npm-release-runtime.mjs
+          npm publish bharatcode-0.2.10.tgz --tag next --access public --provenance
+
+      - name: Retain protected next gate receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bharatcode-cli-recovery-next-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: bharatcode-cli-npm-next-gate.json
+
+      - name: Verify real registry tarball and next tag
+        id: registry
+        run: |
+          set -euo pipefail
+          for delay in 2 4 8 16 30; do
+            next="$(npm view "$PACKAGE_NAME" dist-tags.next 2>/dev/null || true)"
+            test "$next" = "$PACKAGE_VERSION" && break
+            sleep "$delay"
+          done
+          test "$(npm view "$PACKAGE_NAME" dist-tags.next)" = "$PACKAGE_VERSION"
+          tarball="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.tarball)"
+          integrity="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.integrity)"
+          test "$tarball" = "https://registry.npmjs.org/bharatcode/-/bharatcode-0.2.10.tgz"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$tarball" --output registry.tgz
+          test "$(sha256sum registry.tgz | cut -d ' ' -f1)" = "$PACKAGE_SHA256"
+          printf 'tarball=%s\nintegrity=%s\n' "$tarball" "$integrity" >> "$GITHUB_OUTPUT"
+
+      - name: Install and test the exact real-registry tarball
+        run: |
+          set -euo pipefail
+          smoke_root="$(mktemp -d)"
+          trap 'rm -rf "$smoke_root"' EXIT
+          credentials="$smoke_root/home/.bharatcode/credentials.json"
+          mkdir -p "$(dirname "$credentials")"
+          printf '{"sentinel":true}\n' > "$credentials"
+          HOME="$smoke_root/home" npm install --prefix "$smoke_root/install" --no-save --registry=https://registry.npmjs.org "$PACKAGE_NAME@$PACKAGE_VERSION"
+          HOME="$smoke_root/home" BHARATCODE_CREDENTIALS_PATH="$credentials" SMOKE_RESULT_PATH="$PWD/registry-smoke-result.json" node scripts/verify-installed-cli.mjs "$smoke_root/install/node_modules/bharatcode"
+
+      - name: Create bound registry and next receipts
+        env:
+          REGISTRY_INTEGRITY: ${{ steps.registry.outputs.integrity }}
+          REGISTRY_TARBALL: ${{ steps.registry.outputs.tarball }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { canonicalJson, createNextReceipt, createRegistrySmokeReceipt, sha256 } from "./scripts/npm-release-contract.mjs"
+          import { readFileSync, writeFileSync } from "node:fs"
+          const dispatch = { event: "workflow_dispatch", run_attempt: process.env.RUN_ATTEMPT, source_sha: process.env.PACKAGE_SOURCE_SHA, tag: process.env.RELEASE_TAG, version: process.env.PACKAGE_VERSION }
+          const smoke = JSON.parse(readFileSync("registry-smoke-result.json", "utf8"))
+          const registry = createRegistrySmokeReceipt({ completed_at: new Date().toISOString(), dispatch, package_sha256: process.env.PACKAGE_SHA256, registry_integrity: process.env.REGISTRY_INTEGRITY, registry_tarball: process.env.REGISTRY_TARBALL, run_id: process.env.RUN_ID, smoke, tag_object_sha: process.env.TAG_OBJECT_SHA })
+          writeFileSync("bharatcode-cli-registry-smoke.json", canonicalJson(registry), { mode: 0o600 })
+          const next = createNextReceipt({ completed_at: new Date().toISOString(), dispatch, package_sha256: process.env.PACKAGE_SHA256, registry_integrity: process.env.REGISTRY_INTEGRITY, registry_smoke_sha256: sha256(readFileSync("bharatcode-cli-registry-smoke.json")), registry_tarball: process.env.REGISTRY_TARBALL, run_id: process.env.RUN_ID })
+          writeFileSync("bharatcode-cli-npm-next.json", canonicalJson(next), { mode: 0o600 })
+          EOF
+
+      - name: Attest next and registry smoke receipts
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: |
+            bharatcode-cli-npm-next.json
+            bharatcode-cli-registry-smoke.json
+
+      - name: Upload protected next receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bharatcode-cli-recovery-next-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            bharatcode-cli-npm-next.json
+            bharatcode-cli-registry-smoke.json
+
+  promote-latest:
+    name: Promote recovered next package to latest
+    needs: [admit-recovery, publish-next]
+    runs-on: ubuntu-24.04
+    environment: npm-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out exact recovery controller
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download admitted package and next receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          merge-multiple: true
+          pattern: bharatcode-cli-recovery-*-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Download admitted recovery package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bharatcode-cli-recovery-package-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Revalidate exact next publication
+        id: next
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          test "$(sha256sum bharatcode-0.2.10.tgz | cut -d ' ' -f1)" = "$PACKAGE_SHA256"
+          node --input-type=module <<'EOF'
+          import { parseCanonicalJson, sha256, validateNextReceipt, validateRegistrySmokeReceipt } from "./scripts/npm-release-contract.mjs"
+          import { readFileSync } from "node:fs"
+          const smokeBytes = readFileSync("bharatcode-cli-registry-smoke.json")
+          const next = validateNextReceipt(parseCanonicalJson(readFileSync("bharatcode-cli-npm-next.json")), { package_sha256: process.env.PACKAGE_SHA256, registry_smoke_sha256: sha256(smokeBytes), run_attempt: process.env.RUN_ATTEMPT, run_id: process.env.RUN_ID, source_sha: process.env.PACKAGE_SOURCE_SHA })
+          validateRegistrySmokeReceipt(parseCanonicalJson(smokeBytes), { package_sha256: process.env.PACKAGE_SHA256, registry_integrity: next.registry_integrity, run_attempt: process.env.RUN_ATTEMPT, run_id: process.env.RUN_ID, source_sha: process.env.PACKAGE_SOURCE_SHA, tag_object_sha: process.env.TAG_OBJECT_SHA })
+          EOF
+          test "$(npm view "$PACKAGE_NAME" dist-tags.next)" = "$PACKAGE_VERSION"
+          test "$(npm view "$PACKAGE_NAME" dist-tags.latest)" = "$ROLLBACK_VERSION"
+          expected_integrity="$(node -p "JSON.parse(require('fs').readFileSync('bharatcode-cli-npm-next.json')).registry_integrity")"
+          test "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.integrity)" = "$expected_integrity"
+          tarball="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.tarball)"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$tarball" --output registry.tgz
+          test "$(sha256sum registry.tgz | cut -d ' ' -f1)" = "$PACKAGE_SHA256"
+          printf 'next_receipt_sha=%s\n' "$(sha256sum bharatcode-cli-npm-next.json | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate protected owner bypass and promote recovered package to latest
+        env:
+          ADMITTED_TAG_OBJECT_SHA: ${{ env.TAG_OBJECT_SHA }}
+          GITHUB_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          OWNER_BYPASS_ACTOR: shrey16
+          RELEASE_APPROVAL_MODE: owner-admin-bypass-v1
+          RELEASE_CONTROLLER_SHA: ${{ github.sha }}
+          RELEASE_ENVIRONMENT: npm-latest
+          RELEASE_GATE_RECEIPT: bharatcode-cli-npm-latest-gate.json
+          RELEASE_SUBJECT_SHA256: ${{ steps.next.outputs.next_receipt_sha }}
+          REQUIRED_REVIEWER: satyamlohiya
+          SOURCE_SHA: ${{ env.PACKAGE_SOURCE_SHA }}
+        run: |
+          set -euo pipefail
+          test -n "$NODE_AUTH_TOKEN"
+          node scripts/verify-npm-release-runtime.mjs
+          npm dist-tag add bharatcode@0.2.10 latest
+
+      - name: Verify latest and preserved rollback
+        run: |
+          set -euo pipefail
+          test "$(npm view "$PACKAGE_NAME" dist-tags.latest)" = "$PACKAGE_VERSION"
+          test "$(npm view "$PACKAGE_NAME@$ROLLBACK_VERSION" version)" = "$ROLLBACK_VERSION"
+
+      - name: Upload protected latest gate receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bharatcode-cli-recovery-latest-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: bharatcode-cli-npm-latest-gate.json

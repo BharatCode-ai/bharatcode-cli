@@ -10,23 +10,37 @@ assignment does not authorize publication by itself.
   the immutable `next` receipt and confirming that the exact tested version is
   the version being promoted.
 
-GitHub environment protection has `prevent_self_review` enabled for both
-stages. An administrator bypass is not accepted as review evidence. Immediately
-before either npm mutation, the workflow queries GitHub's authoritative
-workflow-run review history and requires exactly one `approved` record naming
-only the current environment and its assigned reviewer. A missing record, a
-bypass state, a different actor, a multi-environment record, or a duplicate
-record blocks the stage even while the live environments allow administrators
-to bypass their protection rules. The
-initiator, source author, and required reviewer must be recorded; the reviewer
-must not be the initiator or approve their own deployment. Approval for
-`npm-next` cannot be reused for `npm-latest`.
+GitHub environment protection has `prevent_self_review` enabled for both stages.
+For this explicitly authorized 0.2.10 publication, the checked-in gate selects
+`owner-admin-bypass-v1` and the exact `shrey16` bypass actor. Immediately before
+either npm mutation, the workflow queries GitHub's authoritative workflow-run
+review history and requires exactly one `skipped` record naming only the current
+environment and that actor. The workflow actor and triggering actor must both be
+`shrey16`. A missing or foreign bypass record, a normal approval posing as a
+bypass, a different actor, a multi-environment record, or a duplicate record
+blocks the stage. There is no generic administrator fallback and absence of a
+review record never counts as authorization.
+
+The validator retains the assigned-reviewer contract as a separate mode: when
+owner bypass is not explicitly selected, it requires one `approved` record from
+the environment's assigned reviewer and enforces initiator/source separation.
+Approval or bypass evidence for `npm-next` cannot be reused for `npm-latest`.
+
+The one-shot recovery workflow publishes only the immutable attempt-one package
+artifact from failed run `33812971614`: source `9cb1c185...`, artifact ID
+`9915607947`, its pinned Actions artifact digest, package SHA-256, original
+annotated tag object, and original attestation are all checked before the
+artifact enters the protected publication job. Later reruns are irrelevant to
+that selection. The recovery controller is independently bound to the current
+default-branch SHA in its own gate receipt; it does not move the original tag,
+repack the package, or substitute a new tarball.
 
 For each stage, GitHub retains the authoritative review history and the workflow
 retains a canonical gate receipt with the exact repository, environment,
-reviewer login, source SHA, workflow path, run ID, run attempt, validation time,
-tag-object SHA, and package or `next`-receipt SHA-256. Missing, bypassed,
-mismatched, self-approved, or replayed review evidence keeps that stage blocked.
+approval mode, actual approver, assigned reviewer, source SHA, workflow path,
+run ID, run attempt, validation time, tag-object SHA, and package or
+`next`-receipt SHA-256. Missing, mismatched, foreign, or replayed evidence keeps
+that stage blocked.
 Both receipt-upload steps use an always-run failure path: an ambiguous npm
 failure stays failed but cannot skip retention of a receipt already written.
 

@@ -35,6 +35,8 @@ test("npm release workflow protects next smoke and latest promotion", async () =
   assert.equal(runtimeChecks.length, 3)
   assert.match(workflow, /REQUIRED_REVIEWER:\s*Pankaj-IIT/)
   assert.match(workflow, /REQUIRED_REVIEWER:\s*satyamlohiya/)
+  assert.equal(workflow.match(/RELEASE_APPROVAL_MODE:\s*owner-admin-bypass-v1/g)?.length, 2)
+  assert.equal(workflow.match(/OWNER_BYPASS_ACTOR:\s*shrey16/g)?.length, 2)
   assert.equal(workflow.match(/ADMITTED_TAG_OBJECT_SHA:/g)?.length, 2)
   assert.match(workflow, /bharatcode-cli-registry-smoke\.json/)
   assert.match(workflow, /bharatcode-cli-next-gate-/)
@@ -51,19 +53,15 @@ test("npm release workflow protects next smoke and latest promotion", async () =
   assert.doesNotMatch(workflow, /^ {0,8}NODE_AUTH_TOKEN:/m)
   assert.doesNotMatch(workflow, /--force|--ignore-scripts/)
   assert.ok(
-    runtimeChecks[1] < workflow.indexOf("npm publish bharatcode-0.2.10.tgz") &&
-      workflow.indexOf("npm publish bharatcode-0.2.10.tgz") < runtimeChecks[2],
+    runtimeChecks[1] < workflow.indexOf("npm publish bharatcode-0.2.10.tgz") && workflow.indexOf("npm publish bharatcode-0.2.10.tgz") < runtimeChecks[2],
     "approval and tag checks must precede npm publish",
   )
-  assert.ok(
-    runtimeChecks[2] < workflow.indexOf("npm dist-tag add bharatcode@0.2.10 latest"),
-    "independent approval and tag checks must precede latest promotion",
-  )
+  assert.ok(runtimeChecks[2] < workflow.indexOf("npm dist-tag add bharatcode@0.2.10 latest"), "independent approval and tag checks must precede latest promotion")
 })
 
 test("an ambiguous next publish failure retains its gate receipt without becoming success", async () => {
   const workflow = await readText(".github/workflows/npm-release.yml")
-  const publishStart = workflow.indexOf("- name: Revalidate Pankaj approval and tag, then publish exact tarball to next")
+  const publishStart = workflow.indexOf("- name: Revalidate protected owner bypass and tag, then publish exact tarball to next")
   const retainStart = workflow.indexOf("- name: Retain protected next gate receipt")
   const registryStart = workflow.indexOf("- name: Verify real registry tarball and next tag")
   assert.ok(publishStart >= 0 && publishStart < retainStart && retainStart < registryStart)
@@ -77,18 +75,47 @@ test("an ambiguous next publish failure retains its gate receipt without becomin
   assert.match(retentionStep, /path:\s*bharatcode-cli-npm-next-gate\.json/)
 })
 
-test("npm release review authority is split and cannot authorize itself", async () => {
+test("npm recovery preserves the exact attempt-one package and requires an explicit admin bypass", async () => {
+  const workflow = await readText(".github/workflows/npm-release-recovery.yml")
+  const runtime = await readText("scripts/verify-npm-release-runtime.mjs")
+
+  assert.match(workflow, /name:\s*Recover npm 0\.2\.10 publication/)
+  assert.match(workflow, /workflow_dispatch:/)
+  assert.doesNotMatch(workflow, /^\s*push:/m)
+  assert.match(workflow, /PACKAGE_SOURCE_SHA:\s*9cb1c18535dc9cfcd49cadeeec152bd580e588e4/)
+  assert.match(workflow, /PACKAGE_SHA256:\s*c7e5352994d9b0b9a03ce8a576addeff943182a156bf89b2d78249ce904e2953/)
+  assert.match(workflow, /SOURCE_RUN_ID:\s*["']33812971614["']/)
+  assert.match(workflow, /SOURCE_RUN_ATTEMPT:\s*["']1["']/)
+  assert.match(workflow, /SOURCE_ARTIFACT_ID:\s*["']9915607947["']/)
+  assert.match(workflow, /SOURCE_ARTIFACT_DIGEST:\s*sha256:7cc210b4ba69cf3f7472f697b0af3456ea56b75f1a594ab85ced0b723d57a308/)
+  assert.match(workflow, /actions\/runs\/\$SOURCE_RUN_ID\/attempts\/\$SOURCE_RUN_ATTEMPT/)
+  assert.match(workflow, /validateRecoverySourceEvidence\(\{ artifacts, jobs, run \}\)/)
+  assert.doesNotMatch(workflow, /artifacts\.length\s*!==\s*1/)
+  assert.match(workflow, /gh attestation verify bharatcode-0\.2\.10\.tgz/)
+  assert.match(workflow, /RELEASE_CONTROLLER_SHA:\s*\$\{\{ github\.sha \}\}/)
+  assert.equal(workflow.match(/RELEASE_APPROVAL_MODE:\s*owner-admin-bypass-v1/g)?.length, 2)
+  assert.equal(workflow.match(/OWNER_BYPASS_ACTOR:\s*shrey16/g)?.length, 2)
+  assert.match(runtime, /collaborators\/\$\{encodeURIComponent\(bypassActor\)\}\/permission/)
+  assert.match(workflow, /npm publish bharatcode-0\.2\.10\.tgz --tag next --access public --provenance/)
+  assert.match(workflow, /npm dist-tag add bharatcode@0\.2\.10 latest/)
+  assert.doesNotMatch(workflow, /npm pack|gh release|git tag|git push|--force/)
+})
+
+test("npm release review authority requires explicit protected approval evidence", async () => {
   const policy = await readText("docs/release-review-authority.md")
 
   assert.match(policy, /`npm-next` requires approval from `Pankaj-IIT`/)
   assert.match(policy, /`npm-latest` requires a separate approval from `satyamlohiya`/)
   assert.match(policy, /`prevent_self_review` enabled/)
-  assert.match(policy, /administrator bypass is not accepted as review evidence/i)
-  assert.match(policy, /authoritative\s+workflow-run review history/i)
+  assert.match(policy, /owner-admin-bypass-v1/)
+  assert.match(policy, /exact `shrey16` bypass actor/i)
+  assert.match(policy, /missing or foreign bypass record/i)
+  assert.match(policy, /attempt-one package\s+artifact/i)
+  assert.match(policy, /authoritative\s+workflow-run\s+review history/i)
   assert.match(policy, /annotated tag object/i)
   assert.match(policy, /registry-installed\s+behavioral smoke/i)
   assert.match(policy, /no tag ruleset is currently configured/i)
-  assert.match(policy, /Approval for\s+`npm-next` cannot be reused for `npm-latest`/)
+  assert.match(policy, /Approval or bypass evidence for\s+`npm-next` cannot be reused for `npm-latest`/)
   assert.match(policy, /assignment does not authorize publication by itself/i)
   assert.match(policy, /None of\s+these assignments permits a workflow dispatch, npm publication, dist-tag\s+change/i)
 })

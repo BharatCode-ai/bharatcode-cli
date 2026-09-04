@@ -11,9 +11,22 @@ export const NPM_RELEASE = Object.freeze({
   rollbackVersion: "0.2.9",
   repository: "BharatCode-ai/bharatcode-cli",
   workflow: ".github/workflows/npm-release.yml",
+  recoveryWorkflow: ".github/workflows/npm-release-recovery.yml",
   reviewers: Object.freeze({
     "npm-next": "Pankaj-IIT",
     "npm-latest": "satyamlohiya",
+  }),
+  ownerBypassActor: "shrey16",
+  ownerBypassMode: "owner-admin-bypass-v1",
+  recovery: Object.freeze({
+    artifactDigest: "sha256:7cc210b4ba69cf3f7472f697b0af3456ea56b75f1a594ab85ced0b723d57a308",
+    artifactId: "9915607947",
+    artifactName: "bharatcode-cli-package-33812971614-1",
+    packageSha256: "c7e5352994d9b0b9a03ce8a576addeff943182a156bf89b2d78249ce904e2953",
+    runAttempt: "1",
+    runId: "33812971614",
+    sourceSha: "9cb1c18535dc9cfcd49cadeeec152bd580e588e4",
+    tagObjectSha: "b8cd4936e2c28fb73913d9f0546e0990dd1f3677",
   }),
 })
 
@@ -65,20 +78,77 @@ export function validateDispatch(value) {
   return structuredClone(value)
 }
 
+export function validateRecoverySourceEvidence(input) {
+  exactKeys(input, ["artifacts", "jobs", "run"], "npm recovery source evidence")
+  const { artifacts, jobs, run } = input
+  const expected = NPM_RELEASE.recovery
+  requireValue(run && typeof run === "object", "npm recovery source run is invalid")
+  requireValue(String(run.id) === expected.runId, "npm recovery source run ID changed")
+  requireValue(String(run.run_attempt) === expected.runAttempt, "npm recovery source run attempt changed")
+  requireValue(run.event === "workflow_dispatch", "npm recovery source event changed")
+  requireValue(run.head_branch === "main", "npm recovery source branch changed")
+  requireValue(run.head_sha === expected.sourceSha, "npm recovery source SHA changed")
+  requireValue(run.path === NPM_RELEASE.workflow, "npm recovery source workflow changed")
+  requireValue(run.repository?.full_name === NPM_RELEASE.repository, "npm recovery source repository changed")
+  requireValue(run.conclusion === "failure", "npm recovery source outcome changed")
+
+  requireValue(Array.isArray(jobs), "npm recovery source jobs are invalid")
+  for (const [name, conclusion] of [
+    ["Admit exact reviewed source", "success"],
+    ["Publish protected next candidate", "failure"],
+    ["Promote verified next package to latest", "skipped"],
+  ]) {
+    const matches = jobs.filter((job) => job?.name === name)
+    requireValue(matches.length === 1 && matches[0].conclusion === conclusion, `npm recovery source job changed: ${name}`)
+  }
+
+  requireValue(Array.isArray(artifacts), "npm recovery source artifacts are invalid")
+  const matches = artifacts.filter((artifact) => String(artifact?.id) === expected.artifactId)
+  requireValue(matches.length === 1, "npm recovery source artifact identity is not unique")
+  const [artifact] = matches
+  requireValue(artifact.name === expected.artifactName, "npm recovery source artifact name changed")
+  requireValue(artifact.digest === expected.artifactDigest, "npm recovery source artifact digest changed")
+  requireValue(artifact.expired === false, "npm recovery source artifact expired")
+  requireValue(String(artifact.workflow_run?.id) === expected.runId, "npm recovery artifact run changed")
+  requireValue(artifact.workflow_run?.head_sha === expected.sourceSha, "npm recovery artifact source changed")
+  return {
+    artifact_digest: expected.artifactDigest,
+    artifact_id: expected.artifactId,
+    artifact_name: expected.artifactName,
+    package_sha256: expected.packageSha256,
+    run_attempt: expected.runAttempt,
+    run_id: expected.runId,
+    source_sha: expected.sourceSha,
+    tag_object_sha: expected.tagObjectSha,
+  }
+}
+
 function requireLogin(value, label) {
   requireValue(typeof value === "string" && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u.test(value), `${label} is invalid`)
 }
 
 export function validateProtectedApproval(input, bindings) {
-  exactKeys(bindings, ["environment", "reviewer", "run_attempt", "run_id", "source_sha"], "approval bindings")
+  const ownerBypass = Object.hasOwn(bindings, "approval_mode") || Object.hasOwn(bindings, "bypass_actor")
+  exactKeys(
+    bindings,
+    ownerBypass
+      ? ["approval_mode", "bypass_actor", "environment", "reviewer", "run_attempt", "run_id", "source_sha", "workflow"]
+      : ["environment", "reviewer", "run_attempt", "run_id", "source_sha", "workflow"],
+    "approval bindings",
+  )
   requireValue(bindings.reviewer === NPM_RELEASE.reviewers[bindings.environment], "protected reviewer assignment is invalid")
+  if (ownerBypass) {
+    requireValue(bindings.approval_mode === NPM_RELEASE.ownerBypassMode, "protected approval mode is invalid")
+    requireValue(bindings.bypass_actor === NPM_RELEASE.ownerBypassActor, "protected owner bypass actor is invalid")
+  }
   requirePattern(bindings.run_id, POSITIVE_DECIMAL, "workflow run ID")
   requirePattern(bindings.source_sha, SHA, "workflow source SHA")
   requireValue(bindings.run_attempt === "1", "workflow replay is not allowed")
   requireLogin(bindings.reviewer, "protected reviewer")
+  requireValue(bindings.workflow === NPM_RELEASE.workflow || bindings.workflow === NPM_RELEASE.recoveryWorkflow, "protected workflow assignment is invalid")
 
   requireValue(input && typeof input === "object" && !Array.isArray(input), "approval evidence is invalid")
-  const { approvals, commit, run } = input
+  const { approvals, commit, permission, run } = input
   requireValue(Array.isArray(approvals), "workflow approval history is invalid")
   requireValue(run && typeof run === "object", "workflow run is invalid")
   requireValue(String(run.id) === bindings.run_id, "workflow run ID does not match")
@@ -86,22 +156,12 @@ export function validateProtectedApproval(input, bindings) {
   requireValue(run.event === "workflow_dispatch", "workflow event does not match")
   requireValue(run.head_sha === bindings.source_sha, "workflow source SHA does not match")
   requireValue(run.repository?.full_name === NPM_RELEASE.repository, "workflow repository does not match")
-  requireValue(
-    run.path === NPM_RELEASE.workflow || (typeof run.path === "string" && run.path.startsWith(`${NPM_RELEASE.workflow}@`)),
-    "workflow path does not match",
-  )
+  requireValue(run.path === bindings.workflow || (typeof run.path === "string" && run.path.startsWith(`${bindings.workflow}@`)), "workflow path does not match")
 
-  const targetRecords = approvals.filter((approval) =>
-    Array.isArray(approval?.environments) && approval.environments.some((environment) => environment?.name === bindings.environment),
-  )
+  const targetRecords = approvals.filter((approval) => Array.isArray(approval?.environments) && approval.environments.some((environment) => environment?.name === bindings.environment))
   requireValue(targetRecords.length === 1, "protected environment requires one run-scoped approval record")
   const [approval] = targetRecords
-  requireValue(approval.state === "approved", "protected environment was not explicitly approved")
-  requireValue(
-    approval.environments.length === 1 && approval.environments[0]?.name === bindings.environment,
-    "approval record cannot be reused across environments",
-  )
-  requireValue(approval.user?.login === bindings.reviewer, "protected environment reviewer does not match")
+  requireValue(approval.environments.length === 1 && approval.environments[0]?.name === bindings.environment, "approval record cannot be reused across environments")
 
   requireValue(commit && typeof commit === "object" && commit.sha === bindings.source_sha, "source commit does not match")
   const identities = [
@@ -112,6 +172,30 @@ export function validateProtectedApproval(input, bindings) {
   ]
   for (const [login, label] of identities) {
     requireLogin(login, label)
+  }
+
+  if (ownerBypass) {
+    requireValue(approval.state === "skipped", "protected environment was not explicitly bypassed")
+    requireValue(approval.user?.login === bindings.bypass_actor, "protected owner bypass actor does not match")
+    requireValue(run.actor?.login === bindings.bypass_actor, "protected owner bypass actor did not start the workflow")
+    requireValue(run.triggering_actor?.login === bindings.bypass_actor, "protected owner bypass actor did not trigger the workflow")
+    requireValue(permission?.user?.login === bindings.bypass_actor, "protected owner permission subject does not match")
+    requireValue(permission?.permission === "admin", "protected owner bypass actor is not a repository administrator")
+    return {
+      approval_mode: bindings.approval_mode,
+      approver: bindings.bypass_actor,
+      environment: bindings.environment,
+      reviewer: bindings.reviewer,
+      run_attempt: bindings.run_attempt,
+      run_id: bindings.run_id,
+      source_sha: bindings.source_sha,
+      workflow: bindings.workflow,
+    }
+  }
+
+  requireValue(approval.state === "approved", "protected environment was not explicitly approved")
+  requireValue(approval.user?.login === bindings.reviewer, "protected environment reviewer does not match")
+  for (const [login, label] of identities) {
     requireValue(login !== bindings.reviewer, `protected reviewer cannot be the ${label}`)
   }
 
@@ -121,6 +205,7 @@ export function validateProtectedApproval(input, bindings) {
     run_attempt: bindings.run_attempt,
     run_id: bindings.run_id,
     source_sha: bindings.source_sha,
+    workflow: bindings.workflow,
   }
 }
 
@@ -158,11 +243,7 @@ export function createRegistrySmokeReceipt(input) {
   validateDispatch(input.dispatch)
   validateRegistryFields(input)
   requirePattern(input.tag_object_sha, SHA, "release tag object SHA")
-  exactKeys(
-    input.smoke,
-    ["canonical_config", "cli_version", "credentials_unchanged", "network_calls", "retired_models_rejected"],
-    "registry smoke result",
-  )
+  exactKeys(input.smoke, ["canonical_config", "cli_version", "credentials_unchanged", "network_calls", "retired_models_rejected"], "registry smoke result")
   requireValue(input.smoke.cli_version === NPM_RELEASE.version, "installed CLI version is invalid")
   requireValue(input.smoke.canonical_config === true, "installed CLI canonical config smoke failed")
   requireValue(input.smoke.retired_models_rejected === true, "installed CLI accepted a retired model")
@@ -188,11 +269,7 @@ export function createRegistrySmokeReceipt(input) {
 }
 
 export function validateRegistrySmokeReceipt(value, bindings) {
-  exactKeys(
-    bindings,
-    ["package_sha256", "registry_integrity", "run_attempt", "run_id", "source_sha", "tag_object_sha"],
-    "registry smoke bindings",
-  )
+  exactKeys(bindings, ["package_sha256", "registry_integrity", "run_attempt", "run_id", "source_sha", "tag_object_sha"], "registry smoke bindings")
   exactKeys(
     value,
     [

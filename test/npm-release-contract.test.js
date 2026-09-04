@@ -10,6 +10,7 @@ import {
   validateDispatch,
   validateNextReceipt,
   validateProtectedApproval,
+  validateRecoverySourceEvidence,
   validateRegistrySmokeReceipt,
 } from "../scripts/npm-release-contract.mjs"
 
@@ -58,8 +59,24 @@ function protectedApproval(environment = "npm-next", reviewer = "Pankaj-IIT") {
       run_attempt: "1",
       run_id: runId,
       source_sha: source,
+      workflow: NPM_RELEASE.workflow,
     },
   }
+}
+
+function protectedOwnerBypass(environment = "npm-next", reviewer = "Pankaj-IIT") {
+  const fixture = protectedApproval(environment, reviewer)
+  fixture.approvals[0].state = "skipped"
+  fixture.approvals[0].user.login = "shrey16"
+  fixture.run.actor.login = "shrey16"
+  fixture.run.triggering_actor.login = "shrey16"
+  fixture.permission = { permission: "admin", user: { login: "shrey16" } }
+  fixture.bindings = {
+    ...fixture.bindings,
+    approval_mode: "owner-admin-bypass-v1",
+    bypass_actor: "shrey16",
+  }
+  return fixture
 }
 
 function annotatedTag() {
@@ -112,6 +129,51 @@ function smokeReceipt() {
   })
 }
 
+function recoverySourceEvidence() {
+  return {
+    run: {
+      id: 33812971614,
+      run_attempt: 1,
+      event: "workflow_dispatch",
+      head_branch: "main",
+      head_sha: NPM_RELEASE.recovery.sourceSha,
+      path: NPM_RELEASE.workflow,
+      repository: { full_name: NPM_RELEASE.repository },
+      conclusion: "failure",
+    },
+    jobs: [
+      { name: "Admit exact reviewed source", conclusion: "success" },
+      { name: "Publish protected next candidate", conclusion: "failure" },
+      {
+        name: "Promote verified next package to latest",
+        conclusion: "skipped",
+      },
+    ],
+    artifacts: [
+      {
+        id: 9915607947,
+        name: NPM_RELEASE.recovery.artifactName,
+        digest: NPM_RELEASE.recovery.artifactDigest,
+        expired: false,
+        workflow_run: {
+          id: 33812971614,
+          head_sha: NPM_RELEASE.recovery.sourceSha,
+        },
+      },
+      {
+        id: 9919999999,
+        name: "bharatcode-cli-package-33812971614-2",
+        digest: `sha256:${"f".repeat(64)}`,
+        expired: false,
+        workflow_run: {
+          id: 33812971614,
+          head_sha: NPM_RELEASE.recovery.sourceSha,
+        },
+      },
+    ],
+  }
+}
+
 test("accepts the exact first-attempt CLI release identity", () => {
   assert.deepEqual(validateDispatch(dispatch), dispatch)
 })
@@ -130,6 +192,33 @@ test("rejects extra dispatch authority", () => {
   assert.throws(() => validateDispatch({ ...dispatch, token: "secret" }))
 })
 
+test("selects the pinned attempt-one artifact despite a later rerun artifact", () => {
+  assert.deepEqual(validateRecoverySourceEvidence(recoverySourceEvidence()), {
+    artifact_digest: NPM_RELEASE.recovery.artifactDigest,
+    artifact_id: NPM_RELEASE.recovery.artifactId,
+    artifact_name: NPM_RELEASE.recovery.artifactName,
+    package_sha256: NPM_RELEASE.recovery.packageSha256,
+    run_attempt: NPM_RELEASE.recovery.runAttempt,
+    run_id: NPM_RELEASE.recovery.runId,
+    source_sha: NPM_RELEASE.recovery.sourceSha,
+    tag_object_sha: NPM_RELEASE.recovery.tagObjectSha,
+  })
+})
+
+for (const [name, mutate] of [
+  ["wrong attempt", (value) => (value.run.run_attempt = 2)],
+  ["wrong source", (value) => (value.run.head_sha = "e".repeat(40))],
+  ["missing pinned artifact", (value) => value.artifacts.shift()],
+  ["changed pinned digest", (value) => (value.artifacts[0].digest = `sha256:${"e".repeat(64)}`)],
+  ["expired pinned artifact", (value) => (value.artifacts[0].expired = true)],
+]) {
+  test(`rejects npm recovery evidence with ${name}`, () => {
+    const fixture = recoverySourceEvidence()
+    mutate(fixture)
+    assert.throws(() => validateRecoverySourceEvidence(fixture))
+  })
+}
+
 test("accepts one exact run-scoped protected-environment approval", () => {
   const fixture = protectedApproval()
   const result = validateProtectedApproval(fixture, fixture.bindings)
@@ -139,12 +228,51 @@ test("accepts one exact run-scoped protected-environment approval", () => {
     run_attempt: "1",
     run_id: runId,
     source_sha: source,
+    workflow: NPM_RELEASE.workflow,
   })
 })
 
+test("accepts one explicit run-scoped protected owner bypass", () => {
+  const fixture = protectedOwnerBypass()
+  const result = validateProtectedApproval(fixture, fixture.bindings)
+  assert.deepEqual(result, {
+    approval_mode: "owner-admin-bypass-v1",
+    approver: "shrey16",
+    environment: "npm-next",
+    reviewer: "Pankaj-IIT",
+    run_attempt: "1",
+    run_id: runId,
+    source_sha: source,
+    workflow: NPM_RELEASE.workflow,
+  })
+})
+
+for (const [name, mutate] of [
+  ["an absent bypass record", (value) => (value.approvals = [])],
+  ["an approved state posing as a bypass", (value) => (value.approvals[0].state = "approved")],
+  ["a foreign bypass actor", (value) => (value.approvals[0].user.login = "repo-admin")],
+  ["a mismatched bypass binding", (value) => (value.bindings.bypass_actor = "repo-admin")],
+  ["an unknown approval mode", (value) => (value.bindings.approval_mode = "admin")],
+  ["a foreign workflow actor", (value) => (value.run.actor.login = "repo-admin")],
+  ["a foreign triggering actor", (value) => (value.run.triggering_actor.login = "repo-admin")],
+  ["a non-admin bypass actor", (value) => (value.permission.permission = "write")],
+  ["a foreign permission subject", (value) => (value.permission.user.login = "repo-admin")],
+  ["a foreign workflow", (value) => (value.bindings.workflow = ".github/workflows/other.yml")],
+]) {
+  test(`rejects ${name} as owner-bypass evidence`, () => {
+    const fixture = protectedOwnerBypass()
+    mutate(fixture)
+    assert.throws(() => validateProtectedApproval(fixture, fixture.bindings))
+  })
+}
+
 test("accepts the independent npm-latest reviewer after npm-next history", () => {
   const fixture = protectedApproval("npm-latest", "satyamlohiya")
-  fixture.approvals.unshift({ state: "approved", user: { login: "Pankaj-IIT" }, environments: [{ name: "npm-next" }] })
+  fixture.approvals.unshift({
+    state: "approved",
+    user: { login: "Pankaj-IIT" },
+    environments: [{ name: "npm-next" }],
+  })
   assert.equal(validateProtectedApproval(fixture, fixture.bindings).reviewer, "satyamlohiya")
 })
 
@@ -256,7 +384,13 @@ test("round-trips a closed next-tag receipt", () => {
 
 test("rejects minimal, extra, mismatched and duplicate-key receipts", () => {
   const value = receipt()
-  const bindings = { package_sha256: digest, registry_smoke_sha256: "d".repeat(64), run_attempt: "1", run_id: runId, source_sha: source }
+  const bindings = {
+    package_sha256: digest,
+    registry_smoke_sha256: "d".repeat(64),
+    run_attempt: "1",
+    run_id: runId,
+    source_sha: source,
+  }
   assert.throws(() => validateNextReceipt({ schema: value.schema }, bindings))
   assert.throws(() => validateNextReceipt({ ...value, extra: true }, bindings))
   assert.throws(() => validateNextReceipt({ ...value, source_sha: "c".repeat(40) }, bindings))

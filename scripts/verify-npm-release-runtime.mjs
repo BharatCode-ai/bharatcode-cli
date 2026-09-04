@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 import { writeFileSync } from "node:fs"
 
-import {
-  NPM_RELEASE,
-  canonicalJson,
-  validateAnnotatedTag,
-  validateProtectedApproval,
-} from "./npm-release-contract.mjs"
+import { NPM_RELEASE, canonicalJson, validateAnnotatedTag, validateProtectedApproval } from "./npm-release-contract.mjs"
 
 function required(name) {
   const value = process.env[name]
@@ -47,6 +42,7 @@ async function currentTag(sourceSha, admittedTagObjectSha = null) {
 
 async function main() {
   const sourceSha = required("SOURCE_SHA")
+  const controllerSha = process.env.RELEASE_CONTROLLER_SHA || sourceSha
   const mode = process.argv[2]
 
   if (mode === "--tag-only") {
@@ -59,30 +55,55 @@ async function main() {
   const runAttempt = required("GITHUB_RUN_ATTEMPT")
   const environment = required("RELEASE_ENVIRONMENT")
   const reviewer = required("REQUIRED_REVIEWER")
+  const approvalMode = process.env.RELEASE_APPROVAL_MODE
+  const bypassActor = process.env.OWNER_BYPASS_ACTOR
+  const workflow = required("WORKFLOW_PATH")
   const admittedTagObjectSha = required("ADMITTED_TAG_OBJECT_SHA")
   const subjectSha256 = required("RELEASE_SUBJECT_SHA256")
   if (!/^[0-9a-f]{64}$/u.test(subjectSha256)) throw new Error("release subject SHA-256 is invalid")
-  const [run, approvals, commit] = await Promise.all([
+  const [run, approvals, commit, permission] = await Promise.all([
     github(`/actions/runs/${encodeURIComponent(runId)}`),
     github(`/actions/runs/${encodeURIComponent(runId)}/approvals`),
-    github(`/commits/${encodeURIComponent(sourceSha)}`),
+    github(`/commits/${encodeURIComponent(controllerSha)}`),
+    bypassActor ? github(`/collaborators/${encodeURIComponent(bypassActor)}/permission`) : Promise.resolve(null),
   ])
   const approval = validateProtectedApproval(
-    { approvals, commit, run },
-    { environment, reviewer, run_attempt: runAttempt, run_id: runId, source_sha: sourceSha },
+    { approvals, commit, permission, run },
+    approvalMode || bypassActor
+      ? {
+          approval_mode: required("RELEASE_APPROVAL_MODE"),
+          bypass_actor: required("OWNER_BYPASS_ACTOR"),
+          environment,
+          reviewer,
+          run_attempt: runAttempt,
+          run_id: runId,
+          source_sha: controllerSha,
+          workflow,
+        }
+      : {
+          environment,
+          reviewer,
+          run_attempt: runAttempt,
+          run_id: runId,
+          source_sha: controllerSha,
+          workflow,
+        },
   )
   const tag = await currentTag(sourceSha, admittedTagObjectSha)
   const receipt = {
     ...approval,
+    package_source_sha: sourceSha,
     repository: NPM_RELEASE.repository,
-    schema: "bharatcode-cli-runtime-release-gate-v1",
+    schema: "bharatcode-cli-runtime-release-gate-v2",
     subject_sha256: subjectSha256,
     tag: tag.tag,
     tag_object_sha: tag.tag_object_sha,
     validated_at: new Date().toISOString(),
-    workflow: NPM_RELEASE.workflow,
+    workflow,
   }
-  writeFileSync(required("RELEASE_GATE_RECEIPT"), canonicalJson(receipt), { mode: 0o600 })
+  writeFileSync(required("RELEASE_GATE_RECEIPT"), canonicalJson(receipt), {
+    mode: 0o600,
+  })
   process.stdout.write(`Validated ${environment} approval and annotated release tag.\n`)
 }
 

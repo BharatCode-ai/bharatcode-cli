@@ -148,14 +148,16 @@ jobs:
             exit 1
           fi
 
-      - name: Revalidate Pankaj approval and tag, then publish exact tarball to next
+      - name: Revalidate protected owner bypass and tag, then publish exact tarball to next
         env:
           ADMITTED_TAG_OBJECT_SHA: ${{ needs.admit-source.outputs.tag_object_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_ENVIRONMENT: npm-next
           RELEASE_GATE_RECEIPT: bharatcode-cli-npm-next-gate.json
+          RELEASE_APPROVAL_MODE: owner-admin-bypass-v1
           RELEASE_SUBJECT_SHA256: ${{ needs.admit-source.outputs.package_sha }}
+          OWNER_BYPASS_ACTOR: shrey16
           REQUIRED_REVIEWER: Pankaj-IIT
         run: |
           set -euo pipefail
@@ -314,14 +316,16 @@ jobs:
           test "$(sha256sum registry.tgz | cut -d " " -f1)" = "${{ needs.admit-source.outputs.package_sha }}"
           printf 'next_receipt_sha=%s\n' "$(sha256sum bharatcode-cli-npm-next.json | cut -d " " -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Revalidate Satyam approval and tag, then promote the same version to latest
+      - name: Revalidate protected owner bypass and tag, then promote the same version to latest
         env:
           ADMITTED_TAG_OBJECT_SHA: ${{ needs.admit-source.outputs.tag_object_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_ENVIRONMENT: npm-latest
           RELEASE_GATE_RECEIPT: bharatcode-cli-npm-latest-gate.json
+          RELEASE_APPROVAL_MODE: owner-admin-bypass-v1
           RELEASE_SUBJECT_SHA256: ${{ steps.next.outputs.next_receipt_sha }}
+          OWNER_BYPASS_ACTOR: shrey16
           REQUIRED_REVIEWER: satyamlohiya
         run: |
           set -euo pipefail
