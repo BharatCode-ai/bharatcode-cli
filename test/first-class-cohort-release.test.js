@@ -393,6 +393,28 @@ test(
   },
 )
 
+test("latest verification tolerates bounded stale registry reads and fails closed on exhaustion", async () => {
+  const workflow = await readFile(resolve(root, ".github/workflows/npm-release.yml"), "utf8")
+  const match = workflow.match(/          verify_latest\(\) \{[\s\S]*?\n          \}/u)
+  assert.ok(match, "bounded latest verifier must exist")
+  const verifier = match[0].replace(/^          /gmu, "")
+  const harness = `${verifier}\nCLI_VERSION=1.15.26\nread_count=0\nsleep() { :; }\nnpm() { read_count=$((read_count+1)); if [[ "$CASE" == converges && "$read_count" -ge 2 ]]; then printf '1.15.26\\n'; else printf '1.15.25\\n'; fi; }\nverify_latest bharatcode\n`
+  // Reads run in command substitutions, so use a durable counter for the mock.
+  const fixtureRoot = await mkdtemp(resolve(tmpdir(), "bc-latest-poll-"))
+  try {
+    const script = harness.replace('read_count=$((read_count+1));', 'read_count=$(cat "$COUNTER"); read_count=$((read_count+1)); printf "%s" "$read_count" > "$COUNTER";')
+    for (const [scenario, expectedStatus, expectedReads] of [["converges", 0, 2], ["stale", 1, 6]]) {
+      const counter = resolve(fixtureRoot, "counter")
+      await writeFile(counter, "0")
+      const result = spawnSync("bash", ["-c", script], { env: { ...process.env, CASE: scenario, COUNTER: counter }, encoding: "utf8" })
+      assert.equal(result.status, expectedStatus, result.stderr)
+      assert.equal(Number(await readFile(counter, "utf8")), expectedReads)
+    }
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true })
+  }
+})
+
 test("workflow downloads signed cohort assets and never packs the wrapper", async () => {
   const workflow = await readFile(
     resolve(root, ".github/workflows/npm-release.yml"),
@@ -417,6 +439,13 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
   )
   assert.doesNotMatch(workflow, /npm publish/u)
   assert.match(workflow, /Original publisher package is unavailable; recovery cannot publish/u)
+  assert.match(workflow, /if: \$\{\{ false \}\} # Completed in run 33924860008/u)
+  assert.match(workflow, /name: bharatcode-first-class-cli-next-33924860008-1/u)
+  assert.match(workflow, /run-id: 33924860008/u)
+  assert.match(workflow, /VERIFIED_NEXT_CONTROLLER_SHA: d3b1cf9786255c5cf7baab1f7b7d805940815745/u)
+  assert.match(workflow, /VERIFIED_NEXT_RECEIPT_SHA256: 1584b2c0fa6c050785935d4d6129d3896f60abd958d3c78ab6cd8ecee968c6aa/u)
+  assert.equal((workflow.match(/--source-digest "\$VERIFIED_NEXT_CONTROLLER_SHA"/gu) || []).length, 2)
+  assert.doesNotMatch(workflow, /needs: publish-next|needs\.publish-next\.outputs/u)
   assert.match(
     workflow,
     /local package="\.\/release-input\/\$name-\$CLI_VERSION\.tgz"/u,
