@@ -42,7 +42,7 @@ test("npm release workflow publishes only the signed first-class Desktop cohort"
     workflow,
     /npm publish "\$package" --tag next --access public --provenance/,
   )
-  assert.match(workflow, /npm dist-tag add "bharatcode@\$CLI_VERSION" latest/)
+  assert.match(workflow, /promote_or_verify bharatcode/)
   assert.match(workflow, /environment:\s*npm-next/)
   assert.match(workflow, /environment:\s*npm-latest/)
   assert.match(
@@ -50,7 +50,10 @@ test("npm release workflow publishes only the signed first-class Desktop cohort"
     /npx --yes "npm@\$npm_major" install[\s\S]*"bharatcode@\$CLI_VERSION"/,
   )
   assert.match(workflow, /NPM_TOKEN/)
-  assert.equal(workflow.match(/NODE_AUTH_TOKEN:/g)?.length, 2)
+  assert.equal(
+    workflow.match(/NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/g)?.length,
+    2,
+  )
   assert.doesNotMatch(workflow, /^ {0,8}NODE_AUTH_TOKEN:/m)
   assert.doesNotMatch(workflow, /npm pack|opencode-ai|--force|--ignore-scripts/)
   const platformPublish = workflow.indexOf(
@@ -58,9 +61,7 @@ test("npm release workflow publishes only the signed first-class Desktop cohort"
   )
   const metaPublish = workflow.indexOf("publish_or_verify bharatcode")
   const installedSmoke = workflow.indexOf("for npm_major in 11 12; do")
-  const latest = workflow.indexOf(
-    'npm dist-tag add "bharatcode@$CLI_VERSION" latest',
-  )
+  const latest = workflow.indexOf("promote_or_verify bharatcode")
   assert.ok(
     platformPublish >= 0 &&
       platformPublish < metaPublish &&

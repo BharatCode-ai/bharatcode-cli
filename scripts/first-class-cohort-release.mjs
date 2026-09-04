@@ -7,6 +7,8 @@ import { pathToFileURL } from "node:url"
 const SHA = /^[0-9a-f]{40}$/u
 const SHA256 = /^[0-9a-f]{64}$/u
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u
+const SHA512 = /^[0-9a-f]{128}$/u
+const SLSA_PROVENANCE = "https://slsa.dev/provenance/v1"
 
 export const PLATFORM_PACKAGE_NAMES = Object.freeze([
   "bharatcode-darwin-arm64",
@@ -383,6 +385,164 @@ export function validatePackageManifests(manifests) {
   return ["bharatcode", ...PLATFORM_PACKAGE_NAMES]
 }
 
+function decodeProvenancePayload(value) {
+  requireValue(
+    typeof value === "string" && value.length > 0,
+    "npm provenance payload is missing",
+  )
+  const bytes = Buffer.from(value, "base64")
+  requireValue(
+    bytes.length > 0 &&
+      bytes.toString("base64").replace(/=+$/u, "") ===
+        value.replace(/=+$/u, ""),
+    "npm provenance payload is invalid",
+  )
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+}
+
+export function validateNpmProvenanceAudit(value, bindings) {
+  exactKeys(
+    bindings,
+    ["controller_sha", "name", "version"],
+    "npm provenance bindings",
+  )
+  pattern(bindings.controller_sha, SHA, "npm provenance controller SHA")
+  requireValue(
+    ["bharatcode", ...PLATFORM_PACKAGE_NAMES].includes(bindings.name),
+    "npm provenance package is invalid",
+  )
+  requireValue(
+    bindings.version === CLI_RELEASE.version,
+    "npm provenance version is invalid",
+  )
+  requireValue(
+    Array.isArray(value?.invalid) && value.invalid.length === 0,
+    "npm provenance audit contains invalid attestations",
+  )
+  requireValue(
+    Array.isArray(value?.missing) && value.missing.length === 0,
+    "npm provenance audit contains missing attestations",
+  )
+  requireValue(
+    Array.isArray(value?.verified),
+    "npm provenance audit verification is missing",
+  )
+  const matches = value.verified.filter(
+    (item) =>
+      item?.name === bindings.name && item?.version === bindings.version,
+  )
+  requireValue(
+    matches.length === 1,
+    "npm provenance package verification is missing or duplicated",
+  )
+  const item = matches[0]
+  requireValue(
+    item.registry === "https://registry.npmjs.org/",
+    "npm provenance registry changed",
+  )
+  requireValue(
+    item.attestations?.provenance?.predicateType === SLSA_PROVENANCE,
+    "npm provenance predicate changed",
+  )
+  requireValue(
+    item.attestations?.url ===
+      `https://registry.npmjs.org/-/npm/v1/attestations/${bindings.name}@${bindings.version}`,
+    "npm provenance attestation URL changed",
+  )
+  requireValue(
+    Array.isArray(item.attestationBundles),
+    "npm provenance bundles are missing",
+  )
+  const bundles = item.attestationBundles.filter(
+    (entry) => entry?.predicateType === SLSA_PROVENANCE,
+  )
+  requireValue(
+    bundles.length === 1,
+    "npm provenance bundle is missing or duplicated",
+  )
+  const statement = decodeProvenancePayload(
+    bundles[0]?.bundle?.dsseEnvelope?.payload,
+  )
+  exactKeys(
+    statement,
+    ["_type", "predicate", "predicateType", "subject"],
+    "npm provenance statement",
+  )
+  requireValue(
+    statement._type === "https://in-toto.io/Statement/v1" &&
+      statement.predicateType === SLSA_PROVENANCE,
+    "npm provenance statement type changed",
+  )
+  requireValue(
+    Array.isArray(statement.subject) && statement.subject.length === 1,
+    "npm provenance subject changed",
+  )
+  const subject = statement.subject[0]
+  exactKeys(subject, ["digest", "name"], "npm provenance subject")
+  const purl = `pkg:npm/${bindings.name}@${bindings.version}`
+  requireValue(subject.name === purl, "npm provenance subject package changed")
+  exactKeys(subject.digest, ["sha512"], "npm provenance subject digest")
+  pattern(subject.digest.sha512, SHA512, "npm provenance subject digest")
+  const definition = statement.predicate?.buildDefinition
+  const details = statement.predicate?.runDetails
+  requireValue(
+    definition?.buildType ===
+      "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+    "npm provenance build type changed",
+  )
+  const workflow = definition.externalParameters?.workflow
+  requireValue(
+    workflow?.repository ===
+      `https://github.com/${CLI_RELEASE.controllerRepository}`,
+    "npm provenance repository changed",
+  )
+  requireValue(
+    workflow?.path === CLI_RELEASE.controllerWorkflow &&
+      workflow?.ref === "refs/heads/main",
+    "npm provenance workflow changed",
+  )
+  requireValue(
+    Array.isArray(definition.resolvedDependencies) &&
+      definition.resolvedDependencies.length === 1,
+    "npm provenance source dependency changed",
+  )
+  const dependency = definition.resolvedDependencies[0]
+  requireValue(
+    dependency?.uri ===
+      `git+https://github.com/${CLI_RELEASE.controllerRepository}@refs/heads/main`,
+    "npm provenance source URI changed",
+  )
+  requireValue(
+    dependency?.digest?.gitCommit === bindings.controller_sha,
+    "npm provenance source SHA changed",
+  )
+  requireValue(
+    definition.internalParameters?.github?.event_name === "workflow_dispatch",
+    "npm provenance event changed",
+  )
+  requireValue(
+    details?.builder?.id === "https://github.com/actions/runner/github-hosted",
+    "npm provenance builder changed",
+  )
+  const invocation = details?.metadata?.invocationId
+  const match =
+    typeof invocation === "string"
+      ? invocation.match(
+          /^https:\/\/github\.com\/BharatCode-ai\/bharatcode-cli\/actions\/runs\/([1-9][0-9]*)\/attempts\/([1-9][0-9]*)$/u,
+        )
+      : null
+  requireValue(match, "npm provenance invocation changed")
+  return {
+    name: bindings.name,
+    version: bindings.version,
+    purl,
+    sha512: subject.digest.sha512,
+    source_sha: bindings.controller_sha,
+    run_id: match[1],
+    run_attempt: match[2],
+  }
+}
+
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex")
 }
@@ -458,15 +618,25 @@ export async function verifyCliReleaseDirectory(root, bindings) {
 const invoked =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 if (invoked) {
-  const root = process.argv[2]
-  requireValue(
-    root,
-    "usage: first-class-cohort-release.mjs <release-directory>",
-  )
-  const result = await verifyCliReleaseDirectory(root, {
-    source_sha: process.env.DESKTOP_SOURCE_SHA,
-    run_id: process.env.DESKTOP_RUN_ID,
-    run_attempt: process.env.DESKTOP_RUN_ATTEMPT,
-  })
+  const mode = process.argv[2]
+  let result
+  if (mode === "verify-npm-provenance") {
+    const audit = JSON.parse(await readFile(process.argv[3], "utf8"))
+    result = validateNpmProvenanceAudit(audit, {
+      name: process.argv[4],
+      version: process.env.CLI_VERSION,
+      controller_sha: process.env.CONTROLLER_SHA,
+    })
+  } else {
+    requireValue(
+      mode,
+      "usage: first-class-cohort-release.mjs <release-directory>",
+    )
+    result = await verifyCliReleaseDirectory(mode, {
+      source_sha: process.env.DESKTOP_SOURCE_SHA,
+      run_id: process.env.DESKTOP_RUN_ID,
+      run_attempt: process.env.DESKTOP_RUN_ATTEMPT,
+    })
+  }
   process.stdout.write(canonicalJson(result))
 }

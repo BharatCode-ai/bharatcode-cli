@@ -9,6 +9,7 @@ import {
   PLATFORM_PACKAGE_NAMES,
   canonicalJson,
   validateCliCohortBytes,
+  validateNpmProvenanceAudit,
   validatePackageManifests,
 } from "../scripts/first-class-cohort-release.mjs"
 
@@ -119,6 +120,73 @@ function manifests() {
   }
 }
 
+function provenanceAudit(name = "bharatcode") {
+  const statement = {
+    _type: "https://in-toto.io/Statement/v1",
+    subject: [
+      {
+        name: `pkg:npm/${name}@${CLI_RELEASE.version}`,
+        digest: { sha512: "d".repeat(128) },
+      },
+    ],
+    predicateType: "https://slsa.dev/provenance/v1",
+    predicate: {
+      buildDefinition: {
+        buildType:
+          "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+        externalParameters: {
+          workflow: {
+            ref: "refs/heads/main",
+            repository: "https://github.com/BharatCode-ai/bharatcode-cli",
+            path: CLI_RELEASE.controllerWorkflow,
+          },
+        },
+        internalParameters: { github: { event_name: "workflow_dispatch" } },
+        resolvedDependencies: [
+          {
+            uri: "git+https://github.com/BharatCode-ai/bharatcode-cli@refs/heads/main",
+            digest: { gitCommit: "e".repeat(40) },
+          },
+        ],
+      },
+      runDetails: {
+        builder: { id: "https://github.com/actions/runner/github-hosted" },
+        metadata: {
+          invocationId:
+            "https://github.com/BharatCode-ai/bharatcode-cli/actions/runs/123456789/attempts/1",
+        },
+      },
+    },
+  }
+  return {
+    invalid: [],
+    missing: [],
+    verified: [
+      {
+        name,
+        version: CLI_RELEASE.version,
+        registry: "https://registry.npmjs.org/",
+        attestations: {
+          url: `https://registry.npmjs.org/-/npm/v1/attestations/${name}@${CLI_RELEASE.version}`,
+          provenance: { predicateType: "https://slsa.dev/provenance/v1" },
+        },
+        attestationBundles: [
+          {
+            predicateType: "https://slsa.dev/provenance/v1",
+            bundle: {
+              dsseEnvelope: {
+                payload: Buffer.from(JSON.stringify(statement)).toString(
+                  "base64",
+                ),
+              },
+            },
+          },
+        ],
+      },
+    ],
+  }
+}
+
 test("accepts the exact signed Desktop cohort CLI subset", () => {
   const value = cohort()
   const parsed = validateCliCohortBytes(Buffer.from(canonicalJson(value)), {
@@ -196,6 +264,59 @@ test("accepts only the closed first-class package manifests", () => {
   assert.throws(() => validatePackageManifests(missing))
 })
 
+test("accepts only registry-verified npm provenance from the exact controller source", () => {
+  const bindings = {
+    name: "bharatcode",
+    version: CLI_RELEASE.version,
+    controller_sha: "e".repeat(40),
+  }
+  assert.deepEqual(validateNpmProvenanceAudit(provenanceAudit(), bindings), {
+    name: "bharatcode",
+    version: CLI_RELEASE.version,
+    purl: `pkg:npm/bharatcode@${CLI_RELEASE.version}`,
+    sha512: "d".repeat(128),
+    source_sha: "e".repeat(40),
+    run_id: "123456789",
+    run_attempt: "1",
+  })
+
+  for (const mutate of [
+    (value) => value.missing.push({ name: "bharatcode" }),
+    (value) => (value.verified[0].attestationBundles = []),
+    (value) =>
+      (value.verified[0].attestationBundles[0].bundle.dsseEnvelope.payload =
+        "not-base64"),
+    (value) => {
+      const statement = JSON.parse(
+        Buffer.from(
+          value.verified[0].attestationBundles[0].bundle.dsseEnvelope.payload,
+          "base64",
+        ).toString(),
+      )
+      statement.predicate.buildDefinition.externalParameters.workflow.repository =
+        "https://github.com/foreign/repo"
+      value.verified[0].attestationBundles[0].bundle.dsseEnvelope.payload =
+        Buffer.from(JSON.stringify(statement)).toString("base64")
+    },
+    (value) => {
+      const statement = JSON.parse(
+        Buffer.from(
+          value.verified[0].attestationBundles[0].bundle.dsseEnvelope.payload,
+          "base64",
+        ).toString(),
+      )
+      statement.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit =
+        "f".repeat(40)
+      value.verified[0].attestationBundles[0].bundle.dsseEnvelope.payload =
+        Buffer.from(JSON.stringify(statement)).toString("base64")
+    },
+  ]) {
+    const value = structuredClone(provenanceAudit())
+    mutate(value)
+    assert.throws(() => validateNpmProvenanceAudit(value, bindings))
+  }
+})
+
 test("workflow downloads signed cohort assets and never packs the wrapper", async () => {
   const workflow = await readFile(
     resolve(root, ".github/workflows/npm-release.yml"),
@@ -213,8 +334,17 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
     /npm publish "\$package" --tag next --access public --provenance/u,
   )
   assert.match(workflow, /PLATFORM_PACKAGE_NAMES/u)
-  assert.match(workflow, /npm dist-tag add "bharatcode@\$CLI_VERSION" latest/u)
+  assert.match(workflow, /promote_or_verify bharatcode/u)
   assert.match(workflow, /for npm_major in 11 12/u)
   assert.match(workflow, /bun add --cwd "\$smoke_root\/bun"/u)
+  assert.match(
+    workflow,
+    /npm@12\.0\.2 audit signatures --json --include-attestations/u,
+  )
+  assert.match(workflow, /bharatcode-first-class-cli-latest\.json/u)
+  assert.match(
+    workflow,
+    /Re-admit exact controller and Desktop release before latest mutation/u,
+  )
   assert.doesNotMatch(workflow, /npm pack|opencode-ai/u)
 })
