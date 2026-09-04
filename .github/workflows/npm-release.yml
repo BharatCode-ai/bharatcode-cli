@@ -75,6 +75,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
@@ -85,7 +86,7 @@ jobs:
           [[ "$EXPECTED_COHORT_SHA256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$EVENT_NAME" == "workflow_dispatch" ]]
           [[ "$RUN_ATTEMPT" == "1" ]]
-          [[ "${{ inputs.release_tag }}" == "$RELEASE_TAG" ]]
+          [[ "$INPUT_RELEASE_TAG" == "$RELEASE_TAG" ]]
           [[ "$EVENT_SHA" == "$CONTROLLER_SHA" ]]
           [[ "$GITHUB_SHA" == "$CONTROLLER_SHA" ]]
           [[ "$(git rev-parse HEAD)" == "$CONTROLLER_SHA" ]]
@@ -219,7 +220,7 @@ jobs:
             printf '{"private":true}\n' > "$root/package.json"
             (
               cd "$root"
-              npx --yes npm@12.0.2 install --omit=optional --no-save --registry=https://registry.npmjs.org --os="$os" --cpu="$cpu" "$name@$CLI_VERSION" > /dev/null
+              npx --yes npm@12.0.2 install --omit=optional --save-exact --registry=https://registry.npmjs.org --os="$os" --cpu="$cpu" "$name@$CLI_VERSION" > /dev/null
               npx --yes npm@12.0.2 audit signatures --json --include-attestations > audit.json
             )
             node scripts/first-class-cohort-release.mjs verify-npm-provenance "$root/audit.json" "$name" > "registry-provenance/$name.json"
@@ -234,10 +235,11 @@ jobs:
           node --input-type=module <<'EOF'
           import { canonicalJson } from "./scripts/first-class-cohort-release.mjs"
           import { createHash } from "node:crypto"
-          import { readFileSync, writeFileSync } from "node:fs"
+          import { readdirSync, readFileSync, writeFileSync } from "node:fs"
           const verified = JSON.parse(readFileSync("verified-cli.json", "utf8"))
           const registry_provenance = verified.packages.map((item) => JSON.parse(readFileSync(`registry-provenance/${item.name}.json`, "utf8")))
-          const value = { schema: "bharatcode-first-class-cli-next-v2", repository: "BharatCode-ai/bharatcode-cli", controller_sha: process.env.CONTROLLER_SHA, desktop_repository: process.env.DESKTOP_REPOSITORY, desktop_source_sha: process.env.DESKTOP_SOURCE_SHA, desktop_run_id: process.env.DESKTOP_RUN_ID, desktop_run_attempt: process.env.DESKTOP_RUN_ATTEMPT, release_tag: process.env.RELEASE_TAG, cohort_sha256: verified.cohort_sha256, cli_version: process.env.CLI_VERSION, packages: verified.packages, registry_provenance, github: { run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT }, completed_at: new Date().toISOString() }
+          const release_assets = readdirSync("release-input").sort().map((filename) => { const bytes = readFileSync(`release-input/${filename}`); return { filename, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") } })
+          const value = { schema: "bharatcode-first-class-cli-next-v2", repository: "BharatCode-ai/bharatcode-cli", controller_sha: process.env.CONTROLLER_SHA, desktop_repository: process.env.DESKTOP_REPOSITORY, desktop_source_sha: process.env.DESKTOP_SOURCE_SHA, desktop_run_id: process.env.DESKTOP_RUN_ID, desktop_run_attempt: process.env.DESKTOP_RUN_ATTEMPT, release_tag: process.env.RELEASE_TAG, cohort_sha256: verified.cohort_sha256, cli_version: process.env.CLI_VERSION, packages: verified.packages, registry_provenance, release_assets, github: { run_id: process.env.GITHUB_RUN_ID, run_attempt: process.env.GITHUB_RUN_ATTEMPT }, completed_at: new Date().toISOString() }
           const bytes = canonicalJson(value)
           writeFileSync("bharatcode-first-class-cli-next.json", bytes, { mode: 0o600 })
           writeFileSync("bharatcode-first-class-cli-next.json.sha256", `${createHash("sha256").update(bytes).digest("hex")}  bharatcode-first-class-cli-next.json\n`, { mode: 0o600 })
@@ -331,8 +333,12 @@ jobs:
           const ref = JSON.parse(readFileSync("release-ref-current.json", "utf8"))
           if (state.tagName !== process.env.RELEASE_TAG || state.targetCommitish !== process.env.DESKTOP_SOURCE_SHA || state.isDraft || !state.isPrerelease) throw new Error("Desktop release identity changed before latest mutation")
           if (ref.ref !== `refs/tags/${process.env.RELEASE_TAG}` || ref.object?.type !== "commit" || ref.object.sha !== process.env.DESKTOP_SOURCE_SHA) throw new Error("Desktop release tag changed before latest mutation")
-          const cohort = state.assets.filter((item) => item.name === "bharatcode-next-beta-cohort.json")
-          if (cohort.length !== 1 || cohort[0].digest !== `sha256:${process.env.EXPECTED_COHORT_SHA256}`) throw new Error("Desktop cohort changed before latest mutation")
+          const next = JSON.parse(readFileSync("bharatcode-first-class-cli-next.json", "utf8"))
+          if (!Array.isArray(next.release_assets) || next.release_assets.length !== 29) throw new Error("Desktop release asset receipt changed")
+          for (const expected of next.release_assets) {
+            const matches = state.assets.filter((item) => item.name === expected.filename)
+            if (matches.length !== 1 || matches[0].size !== expected.bytes || matches[0].digest !== `sha256:${expected.sha256}`) throw new Error(`Desktop release asset changed before latest mutation: ${expected.filename}`)
+          }
           EOF
           gh attestation verify bharatcode-first-class-cli-next.json \
             --bundle bharatcode-first-class-cli-next.json.intoto.jsonl \
@@ -387,8 +393,12 @@ jobs:
           const ref = JSON.parse(readFileSync("release-ref-final.json", "utf8"))
           if (state.tagName !== process.env.RELEASE_TAG || state.targetCommitish !== process.env.DESKTOP_SOURCE_SHA || state.isDraft || !state.isPrerelease) throw new Error("Desktop release identity changed immediately before latest mutation")
           if (ref.ref !== `refs/tags/${process.env.RELEASE_TAG}` || ref.object?.type !== "commit" || ref.object.sha !== process.env.DESKTOP_SOURCE_SHA) throw new Error("Desktop release tag changed immediately before latest mutation")
-          const cohort = state.assets.filter((item) => item.name === "bharatcode-next-beta-cohort.json")
-          if (cohort.length !== 1 || cohort[0].digest !== `sha256:${process.env.EXPECTED_COHORT_SHA256}`) throw new Error("Desktop cohort changed immediately before latest mutation")
+          const next = JSON.parse(readFileSync("bharatcode-first-class-cli-next.json", "utf8"))
+          if (!Array.isArray(next.release_assets) || next.release_assets.length !== 29) throw new Error("Desktop release asset receipt changed")
+          for (const expected of next.release_assets) {
+            const matches = state.assets.filter((item) => item.name === expected.filename)
+            if (matches.length !== 1 || matches[0].size !== expected.bytes || matches[0].digest !== `sha256:${expected.sha256}`) throw new Error(`Desktop release asset changed immediately before latest mutation: ${expected.filename}`)
+          }
           EOF
           gh attestation verify bharatcode-first-class-cli-next.json \
             --bundle bharatcode-first-class-cli-next.json.intoto.jsonl \

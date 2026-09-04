@@ -9,6 +9,12 @@ const SHA256 = /^[0-9a-f]{64}$/u
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u
 const SHA512 = /^[0-9a-f]{128}$/u
 const SLSA_PROVENANCE = "https://slsa.dev/provenance/v1"
+const META_SOURCE_SHA256 = Object.freeze({
+  "package/bin/bharatcode.mjs":
+    "00d6893693f39c96fb57e98ad73b38802dc75eacfaac516d602335f18dab0afb",
+  "package/script/distribution.mjs":
+    "09232e787e029b509e396af16ed4082c94bf69e45005567ed6e8c8b4f55b5e9e",
+})
 
 export const PLATFORM_PACKAGE_NAMES = Object.freeze([
   "bharatcode-darwin-arm64",
@@ -547,6 +553,24 @@ function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex")
 }
 
+export function expectedCliTarballEntries(name) {
+  requireValue(
+    ["bharatcode", ...PLATFORM_PACKAGE_NAMES].includes(name),
+    "CLI tarball package is invalid",
+  )
+  if (name === "bharatcode") {
+    return [
+      "package/bin/bharatcode.mjs",
+      "package/package.json",
+      "package/script/distribution.mjs",
+    ]
+  }
+  return [
+    `package/bin/bharatcode${name.includes("windows") ? ".exe" : ""}`,
+    "package/package.json",
+  ]
+}
+
 export async function verifyCliReleaseDirectory(root, bindings) {
   const directory = resolve(root)
   const cohortName = "bharatcode-next-beta-cohort.json"
@@ -568,6 +592,7 @@ export async function verifyCliReleaseDirectory(root, bindings) {
   ])
   const manifests = {}
   for (const record of parsed.cli) {
+    const name = record.key.slice("cli-".length)
     wanted.add(record.filename)
     wanted.add(record.artifact_attestation.filename)
     const subjectPath = resolve(directory, record.filename)
@@ -584,6 +609,34 @@ export async function verifyCliReleaseDirectory(root, bindings) {
         digest(bundle) === record.artifact_attestation.sha256,
       `CLI attestation bytes changed: ${record.key}`,
     )
+    const listed = spawnSync("tar", ["-tzf", subjectPath], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    })
+    requireValue(
+      listed.status === 0 && !listed.error,
+      `CLI package file list cannot be read: ${record.key}`,
+    )
+    const entries = listed.stdout.trim().split("\n").filter(Boolean).sort()
+    requireValue(
+      JSON.stringify(entries) ===
+        JSON.stringify(expectedCliTarballEntries(name).sort()),
+      `CLI package file closure changed: ${record.key}`,
+    )
+    if (name === "bharatcode") {
+      for (const [entry, expected] of Object.entries(META_SOURCE_SHA256)) {
+        const extracted = spawnSync("tar", ["-xOf", subjectPath, entry], {
+          encoding: null,
+          maxBuffer: 1024 * 1024,
+        })
+        requireValue(
+          extracted.status === 0 &&
+            !extracted.error &&
+            digest(extracted.stdout) === expected,
+          `CLI meta source bytes changed: ${entry}`,
+        )
+      }
+    }
     const extracted = spawnSync(
       "tar",
       ["-xOf", subjectPath, "package/package.json"],
@@ -596,7 +649,7 @@ export async function verifyCliReleaseDirectory(root, bindings) {
       extracted.status === 0 && !extracted.error,
       `CLI package manifest cannot be extracted: ${record.key}`,
     )
-    manifests[record.key.slice("cli-".length)] = JSON.parse(extracted.stdout)
+    manifests[name] = JSON.parse(extracted.stdout)
   }
   validatePackageManifests(manifests)
   const actual = (await readdir(directory)).sort()

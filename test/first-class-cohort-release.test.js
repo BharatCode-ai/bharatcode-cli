@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import test from "node:test"
 
@@ -8,6 +10,7 @@ import {
   CLI_RELEASE,
   PLATFORM_PACKAGE_NAMES,
   canonicalJson,
+  expectedCliTarballEntries,
   validateCliCohortBytes,
   validateNpmProvenanceAudit,
   validatePackageManifests,
@@ -264,6 +267,23 @@ test("accepts only the closed first-class package manifests", () => {
   assert.throws(() => validatePackageManifests(missing))
 })
 
+test("allows only the closed native and meta tarball file sets", () => {
+  assert.deepEqual(expectedCliTarballEntries("bharatcode"), [
+    "package/bin/bharatcode.mjs",
+    "package/package.json",
+    "package/script/distribution.mjs",
+  ])
+  assert.deepEqual(expectedCliTarballEntries("bharatcode-linux-x64"), [
+    "package/bin/bharatcode",
+    "package/package.json",
+  ])
+  assert.deepEqual(expectedCliTarballEntries("bharatcode-windows-x64"), [
+    "package/bin/bharatcode.exe",
+    "package/package.json",
+  ])
+  assert.throws(() => expectedCliTarballEntries("opencode-ai"))
+})
+
 test("accepts only registry-verified npm provenance from the exact controller source", () => {
   const bindings = {
     name: "bharatcode",
@@ -317,6 +337,54 @@ test("accepts only registry-verified npm provenance from the exact controller so
   }
 })
 
+test(
+  "saved-exact npm 12 fixture exposes dependency-free package provenance to audit signatures",
+  { skip: process.env.BHARATCODE_NPM_PROVENANCE_LIVE !== "1" },
+  async () => {
+    const directory = await mkdtemp(
+      resolve(tmpdir(), "bharatcode-npm-provenance-"),
+    )
+    try {
+      await writeFile(resolve(directory, "package.json"), '{"private":true}\n')
+      const run = (args) =>
+        spawnSync("npx", ["--yes", "npm@12.0.2", ...args], {
+          cwd: directory,
+          encoding: "utf8",
+        })
+      const install = run([
+        "install",
+        "--omit=optional",
+        "--save-exact",
+        "semver@7.8.5",
+      ])
+      assert.equal(install.status, 0, install.stderr)
+      const manifest = JSON.parse(
+        await readFile(resolve(directory, "package.json"), "utf8"),
+      )
+      assert.equal(manifest.dependencies.semver, "7.8.5")
+      const audit = run([
+        "audit",
+        "signatures",
+        "--json",
+        "--include-attestations",
+      ])
+      assert.equal(audit.status, 0, audit.stderr)
+      const value = JSON.parse(audit.stdout)
+      const matches = value.verified.filter(
+        (item) => item.name === "semver" && item.version === "7.8.5",
+      )
+      assert.equal(matches.length, 1)
+      assert.ok(
+        matches[0].attestationBundles.some(
+          (item) => item.predicateType === "https://slsa.dev/provenance/v1",
+        ),
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+)
+
 test("workflow downloads signed cohort assets and never packs the wrapper", async () => {
   const workflow = await readFile(
     resolve(root, ".github/workflows/npm-release.yml"),
@@ -341,10 +409,14 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
     workflow,
     /npm@12\.0\.2 audit signatures --json --include-attestations/u,
   )
+  assert.match(workflow, /npm@12\.0\.2 install --omit=optional --save-exact/u)
   assert.match(workflow, /bharatcode-first-class-cli-latest\.json/u)
   assert.match(
     workflow,
     /Re-admit exact controller and Desktop release before latest mutation/u,
   )
+  assert.match(workflow, /INPUT_RELEASE_TAG: \$\{\{ inputs\.release_tag \}\}/u)
+  assert.doesNotMatch(workflow, /\[\[ "\$\{\{ inputs\.release_tag \}\}"/u)
+  assert.match(workflow, /next\.release_assets\.length !== 29/u)
   assert.doesNotMatch(workflow, /npm pack|opencode-ai/u)
 })
