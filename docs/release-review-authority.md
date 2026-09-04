@@ -26,6 +26,14 @@ owner bypass is not explicitly selected, it requires one `approved` record from
 the environment's assigned reviewer and enforces initiator/source separation.
 Approval or bypass evidence for `npm-next` cannot be reused for `npm-latest`.
 
+The recovery workflow is convergence-safe after a partial success. If the exact
+attested package bytes and `next` or `latest` tag already exist, a fresh protected
+run must verify those immutable bytes and the current tag before skipping the
+corresponding npm mutation. It must never republish an existing version or move a
+tag whose state is not one of the explicitly admitted rollback or target values.
+Registry checks use bounded retry because npm metadata can lag a successful tag
+mutation briefly.
+
 The one-shot recovery workflow publishes only the immutable attempt-one package
 artifact from failed run `33812971614`: source `9cb1c185...`, artifact ID
 `9915607947`, its pinned Actions artifact digest, package SHA-256, original

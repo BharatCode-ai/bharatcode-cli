@@ -125,13 +125,20 @@ jobs:
           name: bharatcode-cli-recovery-package-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Revalidate package and rollback availability
+        id: package-state
         run: |
           set -euo pipefail
           test "$(sha256sum bharatcode-0.2.10.tgz | cut -d ' ' -f1)" = "$PACKAGE_SHA256"
           test "$(npm view "$PACKAGE_NAME@$ROLLBACK_VERSION" version)" = "$ROLLBACK_VERSION"
           if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version >/dev/null 2>&1; then
-            echo "Exact version already exists; refusing replay or overwrite." >&2
-            exit 1
+            tarball="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.tarball)"
+            test "$tarball" = "https://registry.npmjs.org/bharatcode/-/bharatcode-0.2.10.tgz"
+            curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$tarball" --output registry-existing.tgz
+            test "$(sha256sum registry-existing.tgz | cut -d ' ' -f1)" = "$PACKAGE_SHA256"
+            test "$(npm view "$PACKAGE_NAME" dist-tags.next)" = "$PACKAGE_VERSION"
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Revalidate protected owner bypass and publish exact source tarball to next
@@ -151,7 +158,11 @@ jobs:
           set -euo pipefail
           test -n "$NODE_AUTH_TOKEN"
           node scripts/verify-npm-release-runtime.mjs
-          npm publish bharatcode-0.2.10.tgz --tag next --access public --provenance
+          if [ "${{ steps.package-state.outputs.already_published }}" = true ]; then
+            echo "Exact package and next tag already exist; skipping npm publish."
+          else
+            npm publish bharatcode-0.2.10.tgz --tag next --access public --provenance
+          fi
 
       - name: Retain protected next gate receipt
         if: ${{ always() }}
@@ -273,7 +284,12 @@ jobs:
           validateRegistrySmokeReceipt(parseCanonicalJson(smokeBytes), { package_sha256: process.env.PACKAGE_SHA256, registry_integrity: next.registry_integrity, run_attempt: process.env.RUN_ATTEMPT, run_id: process.env.RUN_ID, source_sha: process.env.PACKAGE_SOURCE_SHA, tag_object_sha: process.env.TAG_OBJECT_SHA })
           EOF
           test "$(npm view "$PACKAGE_NAME" dist-tags.next)" = "$PACKAGE_VERSION"
-          test "$(npm view "$PACKAGE_NAME" dist-tags.latest)" = "$ROLLBACK_VERSION"
+          current_latest="$(npm view "$PACKAGE_NAME" dist-tags.latest)"
+          case "$current_latest" in
+            "$ROLLBACK_VERSION") echo "already_latest=false" >> "$GITHUB_OUTPUT" ;;
+            "$PACKAGE_VERSION") echo "already_latest=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unexpected latest tag: $current_latest" >&2; exit 1 ;;
+          esac
           expected_integrity="$(node -p "JSON.parse(require('fs').readFileSync('bharatcode-cli-npm-next.json')).registry_integrity")"
           test "$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.integrity)" = "$expected_integrity"
           tarball="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" dist.tarball)"
@@ -298,12 +314,22 @@ jobs:
           set -euo pipefail
           test -n "$NODE_AUTH_TOKEN"
           node scripts/verify-npm-release-runtime.mjs
-          npm dist-tag add bharatcode@0.2.10 latest
+          if [ "${{ steps.next.outputs.already_latest }}" = true ]; then
+            echo "Exact latest tag already exists; skipping dist-tag mutation."
+          else
+            npm dist-tag add bharatcode@0.2.10 latest
+          fi
 
       - name: Verify latest and preserved rollback
         run: |
           set -euo pipefail
-          test "$(npm view "$PACKAGE_NAME" dist-tags.latest)" = "$PACKAGE_VERSION"
+          latest=""
+          for delay in 0 2 4 8 16 30; do
+            test "$delay" = 0 || sleep "$delay"
+            latest="$(npm view "$PACKAGE_NAME" dist-tags.latest 2>/dev/null || true)"
+            test "$latest" = "$PACKAGE_VERSION" && break
+          done
+          test "$latest" = "$PACKAGE_VERSION"
           test "$(npm view "$PACKAGE_NAME@$ROLLBACK_VERSION" version)" = "$ROLLBACK_VERSION"
 
       - name: Upload protected latest gate receipt

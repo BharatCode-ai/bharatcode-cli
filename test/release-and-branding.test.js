@@ -101,6 +101,21 @@ test("npm recovery preserves the exact attempt-one package and requires an expli
   assert.doesNotMatch(workflow, /npm pack|gh release|git tag|git push|--force/)
 })
 
+test("npm recovery converges without replaying an exact published package or latest tag", async () => {
+  const workflow = await readText(".github/workflows/npm-release-recovery.yml")
+
+  assert.match(workflow, /id:\s*package-state/)
+  assert.match(workflow, /already_published=true/)
+  assert.match(workflow, /sha256sum registry-existing\.tgz/)
+  assert.match(workflow, /Exact package and next tag already exist; skipping npm publish\./)
+  assert.match(workflow, /steps\.package-state\.outputs\.already_published/)
+  assert.match(workflow, /already_latest=true/)
+  assert.match(workflow, /Exact latest tag already exists; skipping dist-tag mutation\./)
+  assert.match(workflow, /steps\.next\.outputs\.already_latest/)
+  assert.match(workflow, /for delay in 0 2 4 8 16 30/)
+  assert.doesNotMatch(workflow, /Exact version already exists; refusing replay or overwrite/)
+})
+
 test("npm release review authority requires explicit protected approval evidence", async () => {
   const policy = await readText("docs/release-review-authority.md")
 
