@@ -11,14 +11,13 @@ import {
   credentialsSummary,
   getCredentials,
   loginWithBrowser,
-  readCredentials,
 } from "../lib/bharatcode-auth.js"
 import { opencodeArgsFromCliArgs } from "../lib/cli-args.js"
 import {
-  defaultOpenCodeConfigPath,
   ensureBharatCodePlugin,
   installBharatCodeOpenCodePlugin,
 } from "../lib/opencode-config.js"
+import { collectDoctorReport, DoctorCode } from "../lib/doctor.js"
 
 const require = createRequire(import.meta.url)
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
@@ -126,22 +125,49 @@ async function configureOpenCode({ quiet = false } = {}) {
   return { ...result, install, opencodeBin }
 }
 
-async function doctor() {
-  let exitCode = 0
-  const credentials = await readCredentials()
-  if (credentials?.refresh_token || credentials?.access_token) {
-    console.log(`auth: ok (${credentialsPath()})`)
-  } else {
-    console.log("auth: missing (run `bharatcode auth login`)")
-    exitCode = 1
+function isoFromUnix(seconds) {
+  return Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : "unknown"
+}
+
+function renderDoctorCheck(check) {
+  switch (check.code) {
+    case DoctorCode.CREDENTIALS_OK:
+      return `auth: ok (${check.file})`
+    case DoctorCode.CREDENTIALS_MISSING:
+      return `auth: missing — no credentials file at ${check.file} (run \`bharatcode auth login\`)`
+    case DoctorCode.CREDENTIALS_UNREADABLE:
+      return `auth: unreadable — cannot read ${check.file} (${check.errno}) (fix permissions, then re-login)`
+    case DoctorCode.CREDENTIALS_CORRUPT:
+      return `auth: corrupt — ${check.file} is not valid JSON (re-run \`bharatcode auth login\`)`
+    case DoctorCode.CREDENTIALS_PERMISSIONS_BROAD:
+      return `auth: insecure — ${check.file} is readable by other users (mode 0o${check.mode.toString(8)}); run \`chmod 600 ${check.file}\``
+    case DoctorCode.TOKEN_EXPIRED_REFRESHABLE:
+      return `auth: expired — access token expired (${isoFromUnix(check.expiresAt)}); refresh token present, auto-renews on next use`
+    case DoctorCode.TOKEN_EXPIRING_REFRESHABLE:
+      return `auth: expiring — access token expires soon (${isoFromUnix(check.expiresAt)}); refresh token present`
+    case DoctorCode.TOKEN_REFRESH_ONLY:
+      return "auth: refresh-only — no access token yet; refresh token present, minted on next use"
+    case DoctorCode.REFRESH_MISSING_DEGRADED:
+      return "auth: degraded — refresh token missing or invalid; access token still works but cannot be renewed (run `bharatcode auth login`)"
+    case DoctorCode.SESSION_UNUSABLE:
+      return "auth: missing — no usable access or refresh token (run `bharatcode auth login`)"
+    case DoctorCode.ENGINE_CONFIG_OK:
+      return `BharatCode engine config: ok (${check.configPath})`
+    case DoctorCode.ENGINE_CONFIG_MISSING:
+      return `BharatCode engine config: missing (${check.configPath}); created on next launch or run \`bharatcode opencode configure\``
+    case DoctorCode.ENGINE_CONFIG_NOT_WRITABLE:
+      return `BharatCode engine config: not writable (${check.configPath}); check directory permissions`
+    case DoctorCode.ENGINE_CONFIG_ERROR:
+      return `BharatCode engine config: error (${check.errno}) (${check.configPath})`
+    default:
+      return `auth: ${check.code}`
   }
+}
 
-  const configPath = defaultOpenCodeConfigPath()
-  await ensureBharatCodePlugin({ configPath })
-  console.log(`BharatCode engine config: ok (${configPath})`)
-
-  const opencodeBin = await resolveOpenCodeBin()
-  console.log(`BharatCode engine: ${opencodeBin}`)
+async function doctor() {
+  const { checks, exitCode } = await collectDoctorReport()
+  for (const check of checks) console.log(renderDoctorCheck(check))
+  console.log(`BharatCode engine: ${await resolveOpenCodeBin()}`)
   return exitCode
 }
 
