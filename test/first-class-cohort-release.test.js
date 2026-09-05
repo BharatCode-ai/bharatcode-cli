@@ -436,18 +436,16 @@ test("workflow downloads signed cohort assets and never packs the wrapper", asyn
   assert.match(workflow, /--source-digest "\$DESKTOP_SOURCE_SHA"/u)
   assert.match(
     workflow,
-    /PACKAGE_PROVENANCE_SHA: \$\{\{ github\.sha \}\}/u,
+    /PACKAGE_PROVENANCE_SHA: 0f8197dc9e88df4f924cb10968450ef44ccfcb01/u,
   )
-  assert.match(workflow, /PACKAGE_PROVENANCE_RUN_ID: \$\{\{ github\.run_id \}\}/u)
-  assert.match(workflow, /PACKAGE_PROVENANCE_RUN_ATTEMPT: \$\{\{ github\.run_attempt \}\}/u)
+  assert.match(workflow, /PACKAGE_PROVENANCE_RUN_ID: "33960594089"/u)
+  assert.match(workflow, /PACKAGE_PROVENANCE_RUN_ATTEMPT: "1"/u)
   assert.match(
     workflow,
     /CONTROLLER_SHA="\$PACKAGE_PROVENANCE_SHA" node scripts\/first-class-cohort-release\.mjs verify-npm-provenance/u,
   )
-  assert.match(
-    workflow,
-    /npm publish "\$package" --tag next --access public --provenance/u,
-  )
+  assert.doesNotMatch(workflow, /npm publish/u)
+  assert.match(workflow, /Original publisher package is unavailable; recovery cannot publish/u)
   assert.match(
     workflow,
     /local package="\.\/release-input\/\$name-\$CLI_VERSION\.tgz"/u,

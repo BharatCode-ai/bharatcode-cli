@@ -36,9 +36,9 @@ permissions:
 env:
   CLI_VERSION: 1.15.28
   CONTROLLER_SHA: ${{ inputs.controller_sha }}
-  PACKAGE_PROVENANCE_RUN_ATTEMPT: ${{ github.run_attempt }}
-  PACKAGE_PROVENANCE_RUN_ID: ${{ github.run_id }}
-  PACKAGE_PROVENANCE_SHA: ${{ github.sha }}
+  PACKAGE_PROVENANCE_RUN_ATTEMPT: "1"
+  PACKAGE_PROVENANCE_RUN_ID: "33960594089"
+  PACKAGE_PROVENANCE_SHA: 0f8197dc9e88df4f924cb10968450ef44ccfcb01
   DESKTOP_REPOSITORY: BharatCode-ai/bharatcode-desktop
   DESKTOP_RUN_ATTEMPT: ${{ inputs.desktop_run_attempt }}
   DESKTOP_RUN_ID: ${{ inputs.desktop_run_id }}
@@ -176,7 +176,7 @@ jobs:
           }
           EOF
 
-      - name: Publish missing exact packages to next, platform first and meta last
+      - name: Recover existing exact packages to next, platform first and meta last
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -196,7 +196,8 @@ jobs:
               rm registry-existing.tgz
               return
             fi
-            npm publish "$package" --tag next --access public --provenance
+            echo "Original publisher package is unavailable; recovery cannot publish: $name" >&2
+            return 1
           }
           for name in "${PLATFORM_PACKAGE_NAMES[@]}"; do publish_or_verify "$name"; done
           publish_or_verify bharatcode
