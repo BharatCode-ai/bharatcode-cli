@@ -32,8 +32,8 @@ export const PLATFORM_PACKAGE_NAMES = Object.freeze([
 ])
 
 export const CLI_RELEASE = Object.freeze({
-  version: "1.15.26",
-  releaseTag: "desktop-beta-1.15.26",
+  version: "1.15.27",
+  releaseTag: "desktop-beta-1.15.27",
   desktopRepository: "BharatCode-ai/bharatcode-desktop",
   desktopWorkflow: ".github/workflows/bharatcode-next-beta-candidate.yml",
   controllerRepository: "BharatCode-ai/bharatcode-cli",

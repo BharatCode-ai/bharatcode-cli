@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       desktop_source_sha:
-        description: Exact reviewed BharatCode Desktop 1.15.26 source SHA
+        description: Exact reviewed BharatCode Desktop 1.15.27 source SHA
         required: true
         type: string
       desktop_run_id:
@@ -27,32 +27,30 @@ on:
       release_tag:
         description: Exact finalized Desktop release tag
         required: true
-        default: desktop-beta-1.15.26
+        default: desktop-beta-1.15.27
         type: string
 
 permissions:
   contents: read
 
 env:
-  CLI_VERSION: 1.15.26
+  CLI_VERSION: 1.15.27
   CONTROLLER_SHA: ${{ inputs.controller_sha }}
-  PACKAGE_PROVENANCE_RUN_ATTEMPT: "1"
-  PACKAGE_PROVENANCE_RUN_ID: "33924221241"
-  PACKAGE_PROVENANCE_SHA: a7c84ce22073ee42458582b4057cb3b88123a714
-  VERIFIED_NEXT_CONTROLLER_SHA: d3b1cf9786255c5cf7baab1f7b7d805940815745
-  VERIFIED_NEXT_RECEIPT_SHA256: 1584b2c0fa6c050785935d4d6129d3896f60abd958d3c78ab6cd8ecee968c6aa
+  PACKAGE_PROVENANCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+  PACKAGE_PROVENANCE_RUN_ID: ${{ github.run_id }}
+  PACKAGE_PROVENANCE_SHA: ${{ github.sha }}
   DESKTOP_REPOSITORY: BharatCode-ai/bharatcode-desktop
   DESKTOP_RUN_ATTEMPT: ${{ inputs.desktop_run_attempt }}
   DESKTOP_RUN_ID: ${{ inputs.desktop_run_id }}
   DESKTOP_SOURCE_SHA: ${{ inputs.desktop_source_sha }}
   DESKTOP_WORKFLOW: .github/workflows/bharatcode-next-beta-candidate.yml
   EXPECTED_COHORT_SHA256: ${{ inputs.cohort_sha256 }}
-  RELEASE_TAG: desktop-beta-1.15.26
+  RELEASE_TAG: desktop-beta-1.15.27
 
 jobs:
   publish-next:
     name: Verify cohort and publish platform packages before meta
-    if: ${{ false }} # Completed in run 33924860008; this dispatch is tag-only recovery.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     environment: npm-next
     outputs:
@@ -178,7 +176,7 @@ jobs:
           }
           EOF
 
-      - name: Recover existing exact packages to next, platform first and meta last
+      - name: Publish missing exact packages to next, platform first and meta last
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -198,8 +196,7 @@ jobs:
               rm registry-existing.tgz
               return
             fi
-            echo "Original publisher package is unavailable; recovery cannot publish: $name" >&2
-            return 1
+            npm publish "$package" --tag next --access public --provenance
           }
           for name in "${PLATFORM_PACKAGE_NAMES[@]}"; do publish_or_verify "$name"; done
           publish_or_verify bharatcode
@@ -287,11 +284,10 @@ jobs:
 
   promote-latest:
     name: Smoke exact next cohort and promote latest
-    if: github.ref == 'refs/heads/main'
+    needs: publish-next
     runs-on: ubuntu-24.04
     environment: npm-latest
     permissions:
-      actions: read
       contents: read
       id-token: write
       attestations: write
@@ -319,12 +315,10 @@ jobs:
         run: |
           [[ "$RUN_ATTEMPT" == "1" ]] || { printf '%s\n' "Start a fresh controller dispatch after an incomplete latest promotion." >&2; exit 1; }
 
-      - name: Download the exact previously verified next receipt
+      - name: Download and bind same-run next receipt
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: bharatcode-first-class-cli-next-33924860008-1
-          run-id: 33924860008
-          github-token: ${{ github.token }}
+          name: bharatcode-first-class-cli-next-${{ github.run_id }}-${{ github.run_attempt }}
           digest-mismatch: error
 
       - name: Re-admit exact controller and Desktop release before latest mutation
@@ -353,14 +347,14 @@ jobs:
             --bundle bharatcode-first-class-cli-next.json.intoto.jsonl \
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/npm-release.yml" \
-            --source-digest "$VERIFIED_NEXT_CONTROLLER_SHA" \
+            --source-digest "$CONTROLLER_SHA" \
             --deny-self-hosted-runners > /dev/null
 
       - name: Verify every next package and installed host runtime
         run: |
           set -euo pipefail
           sha256sum --check bharatcode-first-class-cli-next.json.sha256
-          [[ "$(cut -d ' ' -f1 bharatcode-first-class-cli-next.json.sha256)" == "$VERIFIED_NEXT_RECEIPT_SHA256" ]]
+          [[ "$(cut -d ' ' -f1 bharatcode-first-class-cli-next.json.sha256)" == "${{ needs.publish-next.outputs.receipt_sha256 }}" ]]
           mapfile -t packages < <(node -e 'for (const item of JSON.parse(require("fs").readFileSync("bharatcode-first-class-cli-next.json")).packages) console.log(`${item.name} ${item.sha256}`)')
           for entry in "${packages[@]}"; do
             name="${entry%% *}"
@@ -413,7 +407,7 @@ jobs:
             --bundle bharatcode-first-class-cli-next.json.intoto.jsonl \
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/npm-release.yml" \
-            --source-digest "$VERIFIED_NEXT_CONTROLLER_SHA" \
+            --source-digest "$CONTROLLER_SHA" \
             --deny-self-hosted-runners > /dev/null
 
       - name: Promote the complete exact cohort to latest, meta last
