@@ -26,7 +26,7 @@ test("npm release workflow publishes only the signed first-class Desktop cohort"
   assert.doesNotMatch(workflow, /^\s*release:/m)
   assert.match(workflow, /id-token:\s*write/)
   assert.match(workflow, /registry-url:\s*https:\/\/registry\.npmjs\.org/)
-  assert.match(workflow, /desktop-beta-1\.15\.25/)
+  assert.match(workflow, /desktop-beta-1\.15\.27/)
   assert.match(workflow, /bharatcode-next-beta-cohort\.json/)
   assert.match(
     workflow,
