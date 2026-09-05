@@ -26,7 +26,7 @@ test("npm release workflow publishes only the signed first-class Desktop cohort"
   assert.doesNotMatch(workflow, /^\s*release:/m)
   assert.match(workflow, /id-token:\s*write/)
   assert.match(workflow, /registry-url:\s*https:\/\/registry\.npmjs\.org/)
-  assert.match(workflow, /desktop-beta-1\.15\.27/)
+  assert.match(workflow, /desktop-beta-1\.15\.28/)
   assert.match(workflow, /bharatcode-next-beta-cohort\.json/)
   assert.match(
     workflow,
@@ -38,8 +38,10 @@ test("npm release workflow publishes only the signed first-class Desktop cohort"
     workflow,
     /node scripts\/first-class-cohort-release\.mjs release-input/,
   )
-  assert.doesNotMatch(workflow, /npm publish/)
-  assert.match(workflow, /Original publisher package is unavailable; recovery cannot publish/)
+  assert.match(
+    workflow,
+    /npm publish "\$package" --tag next --access public --provenance/,
+  )
   assert.match(
     workflow,
     /local package="\.\/release-input\/\$name-\$CLI_VERSION\.tgz"/,
@@ -94,8 +96,10 @@ test("npm publication recovery converges only on byte-identical registry package
   assert.match(workflow, /publish_or_verify\(\)/)
   assert.match(workflow, /npm view "\$name@\$CLI_VERSION" version/)
   assert.match(workflow, /sha256sum registry-existing\.tgz/)
-  assert.doesNotMatch(workflow, /npm publish/)
-  assert.match(workflow, /Original publisher package is unavailable; recovery cannot publish/)
+  assert.match(
+    workflow,
+    /npm publish "\$package" --tag next --access public --provenance/,
+  )
   assert.match(
     workflow,
     /local package="\.\/release-input\/\$name-\$CLI_VERSION\.tgz"/,

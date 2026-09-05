@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       desktop_source_sha:
-        description: Exact reviewed BharatCode Desktop 1.15.27 source SHA
+        description: Exact reviewed BharatCode Desktop 1.15.28 source SHA
         required: true
         type: string
       desktop_run_id:
@@ -27,25 +27,25 @@ on:
       release_tag:
         description: Exact finalized Desktop release tag
         required: true
-        default: desktop-beta-1.15.27
+        default: desktop-beta-1.15.28
         type: string
 
 permissions:
   contents: read
 
 env:
-  CLI_VERSION: 1.15.27
+  CLI_VERSION: 1.15.28
   CONTROLLER_SHA: ${{ inputs.controller_sha }}
-  PACKAGE_PROVENANCE_RUN_ATTEMPT: "1"
-  PACKAGE_PROVENANCE_RUN_ID: "33944104935"
-  PACKAGE_PROVENANCE_SHA: f4adbc82250e994ea89435d2fb3df2c34b022eb4
+  PACKAGE_PROVENANCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+  PACKAGE_PROVENANCE_RUN_ID: ${{ github.run_id }}
+  PACKAGE_PROVENANCE_SHA: ${{ github.sha }}
   DESKTOP_REPOSITORY: BharatCode-ai/bharatcode-desktop
   DESKTOP_RUN_ATTEMPT: ${{ inputs.desktop_run_attempt }}
   DESKTOP_RUN_ID: ${{ inputs.desktop_run_id }}
   DESKTOP_SOURCE_SHA: ${{ inputs.desktop_source_sha }}
   DESKTOP_WORKFLOW: .github/workflows/bharatcode-next-beta-candidate.yml
   EXPECTED_COHORT_SHA256: ${{ inputs.cohort_sha256 }}
-  RELEASE_TAG: desktop-beta-1.15.27
+  RELEASE_TAG: desktop-beta-1.15.28
 
 jobs:
   publish-next:
@@ -176,7 +176,7 @@ jobs:
           }
           EOF
 
-      - name: Recover existing exact packages to next, platform first and meta last
+      - name: Publish missing exact packages to next, platform first and meta last
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -196,8 +196,7 @@ jobs:
               rm registry-existing.tgz
               return
             fi
-            echo "Original publisher package is unavailable; recovery cannot publish: $name" >&2
-            return 1
+            npm publish "$package" --tag next --access public --provenance
           }
           for name in "${PLATFORM_PACKAGE_NAMES[@]}"; do publish_or_verify "$name"; done
           publish_or_verify bharatcode
